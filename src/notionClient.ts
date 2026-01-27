@@ -6,14 +6,13 @@
 
 import { Client } from '@notionhq/client';
 import {
-  INotionConfig,
   INotionPage,
   INotionResponse,
   NotionPropertyType,
   IRichText,
   NotionProperty,
 } from './types';
-import { getNotionConfig, isNotionConfigValid } from './setting';
+import { INotionConfig, getNotionConfig, isNotionConfigValid } from './setting';
 
 /**
  * ============================================
@@ -129,7 +128,9 @@ export class NotionClient {
       let cursor: string | undefined = undefined;
 
       do {
-        const response: INotionResponse<INotionPage> = await this.client.databases.query({
+        // 使用 any 类型避免与 Notion API 返回类型不匹配的问题
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const response: any = await this.client.databases.query({
           database_id: this.config.databaseId,
           start_cursor: cursor,
           page_size: 100, // 每次最多获取100条
@@ -210,7 +211,7 @@ export class NotionClient {
    *
    * @example
    * ```typescript
-   * const text = this.parseRichText(page.properties['Name'].title.rich_text);
+   * const text = this.parseRichText(page.properties['Name'].title);
    * ```
    */
   parseRichText(richTextArray: IRichText[]): string {
@@ -242,10 +243,11 @@ export class NotionClient {
   parsePropertyValue(property: NotionProperty): string {
     switch (property.type) {
       case 'title':
-        return this.parseRichText(property.title.rich_text);
+        // title 是数组，直接使用
+        return this.parseRichText(property.title);
 
       case 'rich_text':
-        return this.parseRichText(property.rich_text.rich_text);
+        return this.parseRichText(property.rich_text);
 
       case 'number':
         return property.number !== null ? String(property.number) : '';
@@ -366,11 +368,18 @@ export class NotionClient {
    * ```
    */
   sanitizeFieldName(name: string): string {
-    return name
+    if (!name || typeof name !== 'string') {
+      return 'unnamed_field';
+    }
+
+    const cleaned = name
       .toLowerCase()
       .replace(/[^a-z0-9_]/g, '_')
       .replace(/_+/g, '_')
       .replace(/^_|_$/g, '');
+
+    // 确保不返回空字符串
+    return cleaned || 'unnamed_field';
   }
 
   /**
@@ -382,6 +391,22 @@ export class NotionClient {
     return Object.keys(page.properties).map((key) =>
       this.sanitizeFieldName(key)
     );
+  }
+
+  /**
+   * 获取数据库ID
+   * @returns string - 数据库ID
+   */
+  getDatabaseId(): string {
+    return this.config.databaseId;
+  }
+
+  /**
+   * 获取配置
+   * @returns INotionConfig - Notion配置
+   */
+  getConfig(): INotionConfig {
+    return this.config;
   }
 }
 

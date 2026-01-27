@@ -6,7 +6,6 @@
 
 import mysql, { Pool, PoolConnection, RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import {
-  IMySQLConfig,
   IMySQLField,
   MySQLFieldType,
   ISchemaAnalysis,
@@ -14,7 +13,7 @@ import {
   NotionPropertyType,
   PROPERTY_TO_MYSQL_MAPPING,
 } from './types';
-import { getMySQLConfig, isMySQLConfigValid, toPoolOptions } from './mysql';
+import { IMySQLConfig, getMySQLConfig, isMySQLConfigValid, toPoolOptions } from './mysql';
 
 /**
  * ============================================
@@ -191,7 +190,7 @@ export class MySQLClient {
         tableName,
       ]);
 
-      return rows.map((row) => {
+      return rows.map((row): IMySQLField => {
         // 解析字段类型
         const typeStr = row.type as string;
         let mysqlType = MySQLFieldType.VARCHAR;
@@ -267,6 +266,7 @@ export class MySQLClient {
     // 添加ID字段（主键）
     fields.push({
       name: 'id',
+      type: MySQLFieldType.VARCHAR,
       notionType: 'rich_text' as NotionPropertyType,
       mysqlType: MySQLFieldType.VARCHAR,
       length: 50,
@@ -278,6 +278,7 @@ export class MySQLClient {
     // 添加时间戳字段
     fields.push({
       name: 'created_time',
+      type: MySQLFieldType.DATETIME,
       notionType: 'created_time' as NotionPropertyType,
       mysqlType: MySQLFieldType.DATETIME,
       length: 0,
@@ -288,6 +289,7 @@ export class MySQLClient {
 
     fields.push({
       name: 'last_edited_time',
+      type: MySQLFieldType.DATETIME,
       notionType: 'last_edited_time' as NotionPropertyType,
       mysqlType: MySQLFieldType.DATETIME,
       length: 0,
@@ -296,20 +298,45 @@ export class MySQLClient {
       comment: '最后编辑时间',
     });
 
+    // 添加URL字段
+    fields.push({
+      name: 'url',
+      type: MySQLFieldType.VARCHAR,
+      notionType: 'url' as NotionPropertyType,
+      mysqlType: MySQLFieldType.VARCHAR,
+      length: 500,
+      isPrimaryKey: false,
+      isNullable: true,
+      comment: 'Notion页面URL',
+    });
+
+    // 添加properties字段（JSON格式存储所有原始属性）
+    fields.push({
+      name: 'properties',
+      type: MySQLFieldType.JSON,
+      notionType: 'json' as NotionPropertyType,
+      mysqlType: MySQLFieldType.JSON,
+      length: 0,
+      isPrimaryKey: false,
+      isNullable: true,
+      comment: 'Notion页面原始属性数据',
+    });
+
     // 解析每个字段
     for (let i = 0; i < fieldNames.length; i++) {
       const fieldName = fieldNames[i];
-      const originalName = Object.keys(fieldTypes)[i];
-      const propertyType = fieldTypes[originalName] || 'rich_text';
+      // fieldTypes 使用清理后的字段名作为 key
+      const propertyType = fieldTypes[fieldName] || 'rich_text';
 
       fields.push({
         name: fieldName,
+        type: PROPERTY_TO_MYSQL_MAPPING[propertyType].mysqlFieldType,
         notionType: propertyType,
         mysqlType: PROPERTY_TO_MYSQL_MAPPING[propertyType].mysqlFieldType,
         length: PROPERTY_TO_MYSQL_MAPPING[propertyType].defaultLength || 0,
         isPrimaryKey: false,
         isNullable: PROPERTY_TO_MYSQL_MAPPING[propertyType].isNullable,
-        comment: `Notion属性: ${originalName}`,
+        comment: `Notion属性: ${fieldName}`,
       });
     }
 
@@ -483,7 +510,7 @@ export class MySQLClient {
     const sql = `
       INSERT INTO \`${tableName}\` (${keys.map((k) => `\`${k}\``).join(', ')})
       VALUES (${placeholders})
-      ON DUPLICATE KEY KEY UPDATE ${updateClauses}
+      ON DUPLICATE KEY UPDATE ${updateClauses}
     `;
 
     try {

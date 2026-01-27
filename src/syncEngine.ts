@@ -6,18 +6,36 @@
 
 import { NotionClient, NotionAPIError } from './notionClient';
 import { MySQLClient, MySQLConnectionError, MySQLSchemaError } from './mysqlClient';
+import { SyncLogger, createSyncLogger } from './syncLogger';
 import {
-  INotionConfig,
-  IMySQLConfig,
   INotionPage,
   ISyncResult,
   ISchemaAnalysis,
   IFieldAnalysis,
   NotionPropertyType,
   MySQLFieldType,
+  IMySQLField,
 } from './types';
-import { getNotionConfig } from './setting';
-import { getMySQLConfig } from './mysql';
+import { INotionConfig, getNotionConfig } from './setting';
+import { IMySQLConfig, getMySQLConfig } from './mysql';
+
+/**
+ * 将ISO 8601日期格式转换为MySQL DATETIME格式
+ * @param isoDate - ISO 8601格式的日期字符串
+ * @returns MySQL兼容的日期时间字符串
+ */
+function toMySQLDateTime(isoDate: string | null | undefined): string | null {
+  if (!isoDate) {
+    return null;
+  }
+  // 解析ISO 8601格式 (如: 2025-10-21T10:15:00.000Z)
+  const date = new Date(isoDate);
+  if (isNaN(date.getTime())) {
+    return null;
+  }
+  // 转换为MySQL DATETIME格式: YYYY-MM-DD HH:MM:SS
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
 
 /**
  * ============================================
@@ -38,6 +56,8 @@ export class SyncEngine {
   private tableName: string;
   /** 调试模式 */
   private debugMode: boolean;
+  /** 同步日志器 */
+  private logger: SyncLogger;
 
   /**
    * 创建同步引擎
@@ -54,6 +74,7 @@ export class SyncEngine {
     this.mysqlClient = new MySQLClient(mysqlConfig);
     this.tableName = options?.tableName || 'notion_sync';
     this.debugMode = options?.debugMode || false;
+    this.logger = createSyncLogger('./logs');
   }
 
   /**
@@ -98,6 +119,9 @@ export class SyncEngine {
       const pages = await this.notionClient.getAllPages();
       result.totalRecords = pages.length;
       console.log(`✅ 获取到 ${pages.length} 条记录`);
+
+      // 保存同步日志
+      this.logger.saveLog(this.notionClient.getDatabaseId(), pages, true);
 
       if (pages.length === 0) {
         console.log('⚠️  Notion数据库中没有数据');
@@ -144,6 +168,14 @@ export class SyncEngine {
       result.error = this.getErrorMessage(error);
       result.duration = Date.now() - startTime;
 
+      // 保存失败的日志
+      this.logger.saveLog(
+        this.notionClient.getDatabaseId(),
+        [],
+        false,
+        result.error
+      );
+
       console.error('❌ 同步失败！');
       console.error(`   错误信息: ${result.error}`);
 
@@ -161,9 +193,14 @@ export class SyncEngine {
   /**
    * 分析Notion数据库结构
    * @param pages - Notion页面数组
+   * @param customTableName - 自定义表名（可选，默认使用实例表名）
    * @returns ISchemaAnalysis - Schema分析结果
    */
-  private async analyzeNotionSchema(pages: INotionPage[]): Promise<ISchemaAnalysis> {
+  private async analyzeNotionSchema(
+    pages: INotionPage[],
+    customTableName?: string
+  ): Promise<ISchemaAnalysis> {
+    const tableName = customTableName || this.tableName;
     // 收集所有字段名和类型
     const fieldTypes: Record<string, NotionPropertyType> = {};
     const fieldNames: string[] = [];
@@ -172,7 +209,13 @@ export class SyncEngine {
     if (pages.length > 0) {
       const firstPage = pages[0];
       for (const [originalName, property] of Object.entries(firstPage.properties)) {
-        const fieldName = this.notionClient.sanitizeFieldName(originalName);
+        // 清理字段名
+        let fieldName = this.notionClient.sanitizeFieldName(originalName);
+
+        // 确保字段名不为空
+        if (!fieldName || fieldName === 'unnamed_field') {
+          fieldName = `field_${property.type}`;
+        }
 
         // 避免重复字段名
         let uniqueFieldName = fieldName;
@@ -183,13 +226,14 @@ export class SyncEngine {
         }
 
         fieldNames.push(uniqueFieldName);
+        // fieldTypes 使用清理后的字段名作为 key
         fieldTypes[uniqueFieldName] = property.type;
       }
     }
 
     // 分析现有表结构
     const tableExists = await this.mysqlClient.tableExists(this.tableName);
-    let existingColumns: IFieldAnalysis[] = [];
+    let existingColumns: Array<IMySQLField & { notionType?: NotionPropertyType }> = [];
 
     if (tableExists) {
       const existingFields = await this.mysqlClient.getTableColumns(this.tableName);
@@ -200,7 +244,7 @@ export class SyncEngine {
     const schema = this.mysqlClient.analyzeSchema(
       fieldNames,
       fieldTypes,
-      this.tableName
+      tableName
     );
     schema.tableExists = tableExists;
 
@@ -230,8 +274,13 @@ export class SyncEngine {
   /**
    * 确保表存在并更新结构
    * @param schema - Schema分析结果
+   * @param customTableName - 自定义表名（可选，默认使用实例表名）
    */
-  private async ensureTableExists(schema: ISchemaAnalysis): Promise<void> {
+  private async ensureTableExists(
+    schema: ISchemaAnalysis,
+    customTableName?: string
+  ): Promise<void> {
+    const tableName = customTableName || this.tableName;
     if (!schema.tableExists) {
       // 创建新表
       await this.mysqlClient.createTable(schema);
@@ -239,7 +288,7 @@ export class SyncEngine {
     } else {
       // 检查是否需要添加新字段
       const existingColumns = await this.mysqlClient.getTableColumns(
-        this.tableName
+        tableName
       );
       const existingFieldNames = new Set(existingColumns.map((c) => c.name));
 
@@ -271,8 +320,10 @@ export class SyncEngine {
     return pages.map((page) => {
       const record: Record<string, unknown> = {
         id: page.id,
-        created_time: page.created_time || null,
-        last_edited_time: page.last_edited_time || null,
+        created_time: toMySQLDateTime(page.created_time),
+        last_edited_time: toMySQLDateTime(page.last_edited_time),
+        url: page.url || '',
+        properties: JSON.stringify(page.properties),
       };
 
       // 解析每个属性
@@ -400,6 +451,153 @@ export class SyncEngine {
    */
   setTableName(tableName: string): void {
     this.tableName = tableName;
+  }
+
+  /**
+   * 同步单个数据库
+   * @param databaseId - Notion数据库ID
+   * @param tableName - MySQL表名
+   * @returns Promise<ISyncResult> - 同步结果
+   */
+  async syncDatabase(databaseId: string, tableName: string): Promise<ISyncResult> {
+    const startTime = Date.now();
+    const result: ISyncResult = {
+      success: false,
+      totalRecords: 0,
+      insertedRecords: 0,
+      updatedRecords: 0,
+      skippedRecords: 0,
+      duration: 0,
+      syncedAt: new Date(),
+    };
+
+    try {
+      console.log('');
+      console.log(`🚀 开始同步数据库: ${databaseId} -> 表: ${tableName}`);
+
+      // 1. 初始化MySQL连接
+      await this.mysqlClient.initialize();
+
+      // 2. 创建新的Notion客户端（使用指定的数据库ID）
+      const notionConfig: INotionConfig = {
+        ...this.notionClient.getConfig(),
+        databaseId,
+      };
+      const notionClient = new NotionClient(notionConfig);
+
+      // 3. 获取Notion数据
+      console.log('📥 正在从Notion获取数据...');
+      const pages = await notionClient.getAllPages();
+      result.totalRecords = pages.length;
+      console.log(`✅ 获取到 ${pages.length} 条记录`);
+
+      // 保存同步日志
+      this.logger.saveLog(databaseId, pages, true);
+
+      if (pages.length === 0) {
+        console.log('⚠️  Notion数据库中没有数据');
+        result.success = true;
+        result.duration = Date.now() - startTime;
+        return result;
+      }
+
+      // 4. 分析Notion数据库结构
+      console.log('🔍 正在分析Notion数据库结构...');
+      const schema = await this.analyzeNotionSchema(pages, tableName);
+      console.log(`✅ 分析完成，发现 ${schema.fields.length} 个字段`);
+
+      // 5. 确保表存在并更新结构
+      console.log('📊 正在同步MySQL表结构...');
+      await this.ensureTableExists(schema);
+      console.log('✅ MySQL表结构同步完成');
+
+      // 6. 转换数据
+      console.log('🔄 正在转换数据格式...');
+      const records = this.convertToRecords(pages, schema);
+      console.log(`✅ 转换完成，${records.length} 条记录待同步`);
+
+      // 7. 批量写入MySQL
+      console.log('💾 正在写入MySQL数据库...');
+      await this.mysqlClient.batchUpsert(tableName, records, 'id');
+      console.log('✅ 数据写入完成');
+
+      // 8. 生成结果
+      result.success = true;
+      result.insertedRecords = records.length;
+      result.updatedRecords = 0;
+      result.skippedRecords = 0;
+      result.duration = Date.now() - startTime;
+
+      console.log('🎉 同步完成！');
+      console.log(`   总记录数: ${result.totalRecords}`);
+      console.log(`   新增记录: ${result.insertedRecords}`);
+      console.log(`   耗时: ${result.duration}ms`);
+
+      return result;
+    } catch (error) {
+      result.success = false;
+      result.error = this.getErrorMessage(error);
+      result.duration = Date.now() - startTime;
+
+      // 保存失败的日志
+      this.logger.saveLog(databaseId, [], false, result.error);
+
+      console.error('❌ 同步失败！');
+      console.error(`   错误信息: ${result.error}`);
+
+      if (this.debugMode && error instanceof Error) {
+        console.error('   堆栈信息:', error.stack);
+      }
+
+      return result;
+    }
+  }
+
+  /**
+   * 同步所有配置的数据库
+   * @param databaseConfigs - 数据库配置数组
+   * @returns Promise<ISyncResult[]> - 所有同步结果
+   */
+  async syncAllDatabases(
+    databaseConfigs: Array<{ databaseId: string; tableName: string }>
+  ): Promise<ISyncResult[]> {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('📦 开始批量同步多个数据库');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log(`   待同步数据库数量: ${databaseConfigs.length}`);
+
+    const results: ISyncResult[] = [];
+
+    for (let i = 0; i < databaseConfigs.length; i++) {
+      const config = databaseConfigs[i];
+      console.log('');
+      console.log(`═══════════════════════════════════════════════════════════`);
+      console.log(`📊 进度: ${i + 1}/${databaseConfigs.length}`);
+      console.log(`═══════════════════════════════════════════════════════════`);
+
+      const result = await this.syncDatabase(config.databaseId, config.tableName);
+      results.push(result);
+    }
+
+    // 输出汇总结果
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('📊 批量同步完成汇总');
+    console.log('═══════════════════════════════════════════════════════════');
+
+    const successCount = results.filter((r) => r.success).length;
+    const failCount = results.filter((r) => !r.success).length;
+    const totalRecords = results.reduce((sum, r) => sum + r.totalRecords, 0);
+    const totalInserted = results.reduce((sum, r) => sum + r.insertedRecords, 0);
+
+    console.log(`   成功: ${successCount} 个数据库`);
+    console.log(`   失败: ${failCount} 个数据库`);
+    console.log(`   总记录数: ${totalRecords}`);
+    console.log(`   总新增记录: ${totalInserted}`);
+    console.log('═══════════════════════════════════════════════════════════');
+
+    return results;
   }
 }
 

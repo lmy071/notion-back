@@ -1,27 +1,74 @@
 /**
  * Notion数据类型定义模块
  * @module types
- * @description 定义Notion API返回数据的完整类型接口，覆盖常见字段类型
+ * @description 定义Notion API返回数据和配置的完整类型接口
  */
 
-import { Client } from '@notionhq/client';
+/**
+ * ============================================
+ * 配置类型定义
+ * ============================================
+ */
+
+/**
+ * Notion集成配置接口
+ */
+export interface INotionConfig {
+  /** Notion集成密钥（Internal Integration Token） */
+  integrationToken: string;
+  /** 目标数据库ID */
+  databaseId: string;
+  /** Notion API版本 */
+  apiVersion: string;
+  /** 请求超时时间（毫秒） */
+  timeoutMs: number;
+}
+
+/**
+ * MySQL连接池配置接口
+ */
+export interface IMySQLConfig {
+  /** 数据库主机地址 */
+  host: string;
+  /** 数据库端口 */
+  port: number;
+  /** 数据库用户名 */
+  user: string;
+  /** 数据库密码 */
+  password: string;
+  /** 数据库名称 */
+  database: string;
+  /** 字符集 */
+  charset: string;
+  /** 连接超时时间（毫秒） */
+  connectTimeout: number;
+  /** 连接池配置 */
+  pool: {
+    /** 最小连接数 */
+    min: number;
+    /** 最大连接数 */
+    max: number;
+    /** 获取连接超时时间（毫秒） */
+    acquireTimeout: number;
+    /** 空闲连接超时时间（毫秒） */
+    idleTimeout: number;
+  };
+  /** 其他选项 */
+  options?: {
+    /** 是否启用多语句查询 */
+    multipleStatements?: boolean;
+    /** 日期处理方式 */
+    dateStrings?: boolean;
+    /** 时区配置 */
+    timezone?: string;
+  };
+}
 
 /**
  * ============================================
  * Notion API 基础类型定义
  * ============================================
  */
-
-/**
- * Notion API响应基础接口
- */
-export interface INotionResponse<T> {
-  object: string;
-  results: T[];
-  next_cursor: string | null;
-  has_more: boolean;
-  type: string;
-}
 
 /**
  * Notion页面基础接口
@@ -43,7 +90,7 @@ export interface INotionPage {
   icon: INotionIcon | null;
   parent: INotionParent;
   archived: boolean;
-  properties: Record<string, INotionProperty>;
+  properties: Record<string, NotionProperty>;
   url: string;
 }
 
@@ -65,7 +112,7 @@ export interface INotionCover {
  * Notion图标
  */
 export interface INotionIcon {
-  type: 'emoji' | 'external' | 'file';
+  type: 'emoji' | 'external' | 'file' | 'custom_emoji';
   emoji?: string;
   external?: {
     url: string;
@@ -73,6 +120,9 @@ export interface INotionIcon {
   file?: {
     url: string;
     expiry_time: string;
+  };
+  custom_emoji?: {
+    id: string;
   };
 }
 
@@ -134,9 +184,23 @@ export type NotionPropertyType =
  */
 export interface INotionTitleProperty extends INotionProperty {
   type: 'title';
-  title: {
-    rich_text: IRichText[];
-  };
+  title: Array<{
+    type: 'text';
+    text: {
+      content: string;
+      link: { url: string } | null;
+    };
+    annotations: {
+      bold: boolean;
+      italic: boolean;
+      strikethrough: boolean;
+      underline: boolean;
+      code: boolean;
+      color: NotionTextColor;
+    };
+    plain_text: string;
+    href: string | null;
+  }>;
 }
 
 /**
@@ -154,31 +218,15 @@ export interface IRichText {
   type: 'text' | 'mention' | 'equation';
   text?: {
     content: string;
-    link: {
-      url: string;
-    } | null;
+    link: { url: string } | null;
   };
   mention?: {
     type: 'page' | 'database' | 'user' | 'date' | 'link_preview';
-    page?: {
-      id: string;
-      object: 'page';
-    };
-    database?: {
-      id: string;
-      object: 'database';
-    };
-    user?: {
-      id: string;
-      object: 'user';
-    };
-    date?: {
-      start: string;
-      end: string | null;
-    };
-    link_preview?: {
-      url: string;
-    };
+    page?: { id: string };
+    database?: { id: string };
+    user?: { id: string };
+    date?: { start: string; end: string | null };
+    link_preview?: { url: string };
   };
   equation?: {
     expression: string;
@@ -315,18 +363,7 @@ export interface INotionPeopleProperty extends INotionProperty {
     type: 'person' | 'bot';
     name: string | null;
     avatar_url: string | null;
-    person?: {
-      email: string;
-    };
-    bot?: {
-      owner: {
-        type: 'user';
-        user: {
-          object: 'user';
-          id: string;
-        };
-      };
-    };
+    person?: { email: string };
   }>;
 }
 
@@ -338,13 +375,8 @@ export interface INotionFilesProperty extends INotionProperty {
   files: Array<{
     type: 'external' | 'file';
     name: string;
-    external?: {
-      url: string;
-    };
-    file?: {
-      url: string;
-      expiry_time: string;
-    };
+    external?: { url: string };
+    file?: { url: string; expiry_time: string };
   }>;
 }
 
@@ -390,10 +422,7 @@ export interface INotionFormulaProperty extends INotionProperty {
     string?: string;
     number?: number;
     boolean?: boolean;
-    date?: {
-      start: string;
-      end: string | null;
-    };
+    date?: { start: string; end: string | null };
   };
 }
 
@@ -402,10 +431,7 @@ export interface INotionFormulaProperty extends INotionProperty {
  */
 export interface INotionRelationProperty extends INotionProperty {
   type: 'relation';
-  relation: Array<{
-    id: string;
-    opened: boolean;
-  }>;
+  relation: Array<{ id: string; opened: boolean }>;
   has_more: boolean;
 }
 
@@ -417,14 +443,8 @@ export interface INotionRollupProperty extends INotionProperty {
   rollup: {
     type: 'number' | 'date' | 'array';
     number?: number;
-    date?: {
-      start: string;
-      end: string | null;
-    };
-    array?: Array<{
-      type: string;
-      [key: string]: unknown;
-    }>;
+    date?: { start: string; end: string | null };
+    array?: Array<Record<string, unknown>>;
     function: NotionRollupFunction;
   };
 }
@@ -463,10 +483,7 @@ export interface INotionCreatedTimeProperty extends INotionProperty {
  */
 export interface INotionCreatedByProperty extends INotionProperty {
   type: 'created_by';
-  created_by: {
-    object: 'user';
-    id: string;
-  };
+  created_by: { object: 'user'; id: string };
 }
 
 /**
@@ -482,10 +499,7 @@ export interface INotionLastEditedTimeProperty extends INotionProperty {
  */
 export interface INotionLastEditedByProperty extends INotionProperty {
   type: 'last_edited_by';
-  last_edited_by: {
-    object: 'user';
-    id: string;
-  };
+  last_edited_by: { object: 'user'; id: string };
 }
 
 /**
@@ -493,10 +507,7 @@ export interface INotionLastEditedByProperty extends INotionProperty {
  */
 export interface INotionUniqueIdProperty extends INotionProperty {
   type: 'unique_id';
-  unique_id: {
-    prefix: string | null;
-    number: number;
-  };
+  unique_id: { prefix: string | null; number: number };
 }
 
 /**
@@ -506,10 +517,7 @@ export interface INotionVerificationProperty extends INotionProperty {
   type: 'verification';
   verification: {
     state: 'verified' | 'unverified';
-    verified_by?: {
-      object: 'user';
-      id: string;
-    };
+    verified_by?: { object: 'user'; id: string };
     date?: string;
   } | null;
 }
@@ -612,163 +620,30 @@ export interface IPropertyToMySQLMapping {
 
 /**
  * 字段映射表
- * @description 定义Notion属性类型到MySQL字段类型的默认映射规则
  */
 export const PROPERTY_TO_MYSQL_MAPPING: Record<NotionPropertyType, IPropertyToMySQLMapping> = {
-  title: {
-    notionPropertyType: 'title',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 1000,
-    isNullable: true,
-    description: '标题映射为VARCHAR',
-  },
-  rich_text: {
-    notionPropertyType: 'rich_text',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 2000,
-    isNullable: true,
-    description: '富文本映射为VARCHAR',
-  },
-  number: {
-    notionPropertyType: 'number',
-    mysqlFieldType: MySQLFieldType.DECIMAL,
-    defaultLength: 20,
-    isNullable: true,
-    description: '数字映射为DECIMAL',
-  },
-  select: {
-    notionPropertyType: 'select',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 100,
-    isNullable: true,
-    description: '单选映射为VARCHAR',
-  },
-  multi_select: {
-    notionPropertyType: 'multi_select',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 500,
-    isNullable: true,
-    description: '多选映射为JSON格式的VARCHAR',
-  },
-  status: {
-    notionPropertyType: 'status',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 50,
-    isNullable: true,
-    description: '状态映射为VARCHAR',
-  },
-  date: {
-    notionPropertyType: 'date',
-    mysqlFieldType: MySQLFieldType.DATETIME,
-    defaultLength: 0,
-    isNullable: true,
-    description: '日期映射为DATETIME',
-  },
-  people: {
-    notionPropertyType: 'people',
-    mysqlFieldType: MySQLFieldType.JSON,
-    defaultLength: 0,
-    isNullable: true,
-    description: '人员映射为JSON',
-  },
-  files: {
-    notionPropertyType: 'files',
-    mysqlFieldType: MySQLFieldType.JSON,
-    defaultLength: 0,
-    isNullable: true,
-    description: '文件映射为JSON',
-  },
-  checkbox: {
-    notionPropertyType: 'checkbox',
-    mysqlFieldType: MySQLFieldType.BOOLEAN,
-    defaultLength: 0,
-    isNullable: true,
-    description: '复选框映射为BOOLEAN',
-  },
-  url: {
-    notionPropertyType: 'url',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 2048,
-    isNullable: true,
-    description: 'URL映射为VARCHAR',
-  },
-  email: {
-    notionPropertyType: 'email',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 255,
-    isNullable: true,
-    description: '邮箱映射为VARCHAR',
-  },
-  phone_number: {
-    notionPropertyType: 'phone_number',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 50,
-    isNullable: true,
-    description: '电话号码映射为VARCHAR',
-  },
-  formula: {
-    notionPropertyType: 'formula',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 500,
-    isNullable: true,
-    description: '公式映射为VARCHAR',
-  },
-  relation: {
-    notionPropertyType: 'relation',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 100,
-    isNullable: true,
-    description: '关联映射为JSON',
-  },
-  rollup: {
-    notionPropertyType: 'rollup',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 500,
-    isNullable: true,
-    description: '汇总映射为VARCHAR',
-  },
-  created_time: {
-    notionPropertyType: 'created_time',
-    mysqlFieldType: MySQLFieldType.DATETIME,
-    defaultLength: 0,
-    isNullable: true,
-    description: '创建时间映射为DATETIME',
-  },
-  created_by: {
-    notionPropertyType: 'created_by',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 100,
-    isNullable: true,
-    description: '创建者映射为VARCHAR',
-  },
-  last_edited_time: {
-    notionPropertyType: 'last_edited_time',
-    mysqlFieldType: MySQLFieldType.DATETIME,
-    defaultLength: 0,
-    isNullable: true,
-    description: '最后编辑时间映射为DATETIME',
-  },
-  last_edited_by: {
-    notionPropertyType: 'last_edited_by',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 100,
-    isNullable: true,
-    description: '最后编辑者映射为VARCHAR',
-  },
-  unique_id: {
-    notionPropertyType: 'unique_id',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 50,
-    isNullable: true,
-    description: '唯一ID映射为VARCHAR',
-  },
-  verification: {
-    notionPropertyType: 'verification',
-    mysqlFieldType: MySQLFieldType.VARCHAR,
-    defaultLength: 50,
-    isNullable: true,
-    description: '验证状态映射为VARCHAR',
-  },
+  title: { notionPropertyType: 'title', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 1000, isNullable: true, description: '标题' },
+  rich_text: { notionPropertyType: 'rich_text', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 2000, isNullable: true, description: '富文本' },
+  number: { notionPropertyType: 'number', mysqlFieldType: MySQLFieldType.DECIMAL, defaultLength: 20, isNullable: true, description: '数字' },
+  select: { notionPropertyType: 'select', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 100, isNullable: true, description: '单选' },
+  multi_select: { notionPropertyType: 'multi_select', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 500, isNullable: true, description: '多选' },
+  status: { notionPropertyType: 'status', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 50, isNullable: true, description: '状态' },
+  date: { notionPropertyType: 'date', mysqlFieldType: MySQLFieldType.DATETIME, defaultLength: 0, isNullable: true, description: '日期' },
+  people: { notionPropertyType: 'people', mysqlFieldType: MySQLFieldType.JSON, defaultLength: 0, isNullable: true, description: '人员' },
+  files: { notionPropertyType: 'files', mysqlFieldType: MySQLFieldType.JSON, defaultLength: 0, isNullable: true, description: '文件' },
+  checkbox: { notionPropertyType: 'checkbox', mysqlFieldType: MySQLFieldType.BOOLEAN, defaultLength: 0, isNullable: true, description: '复选框' },
+  url: { notionPropertyType: 'url', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 2048, isNullable: true, description: 'URL' },
+  email: { notionPropertyType: 'email', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 255, isNullable: true, description: '邮箱' },
+  phone_number: { notionPropertyType: 'phone_number', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 50, isNullable: true, description: '电话' },
+  formula: { notionPropertyType: 'formula', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 500, isNullable: true, description: '公式' },
+  relation: { notionPropertyType: 'relation', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 100, isNullable: true, description: '关联' },
+  rollup: { notionPropertyType: 'rollup', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 500, isNullable: true, description: '汇总' },
+  created_time: { notionPropertyType: 'created_time', mysqlFieldType: MySQLFieldType.DATETIME, defaultLength: 0, isNullable: true, description: '创建时间' },
+  created_by: { notionPropertyType: 'created_by', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 100, isNullable: true, description: '创建者' },
+  last_edited_time: { notionPropertyType: 'last_edited_time', mysqlFieldType: MySQLFieldType.DATETIME, defaultLength: 0, isNullable: true, description: '最后编辑时间' },
+  last_edited_by: { notionPropertyType: 'last_edited_by', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 100, isNullable: true, description: '最后编辑者' },
+  unique_id: { notionPropertyType: 'unique_id', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 50, isNullable: true, description: '唯一ID' },
+  verification: { notionPropertyType: 'verification', mysqlFieldType: MySQLFieldType.VARCHAR, defaultLength: 50, isNullable: true, description: '验证' },
 };
 
 /**
@@ -781,54 +656,64 @@ export const PROPERTY_TO_MYSQL_MAPPING: Record<NotionPropertyType, IPropertyToMy
  * 同步结果接口
  */
 export interface ISyncResult {
-  /** 是否成功 */
   success: boolean;
-  /** 同步的记录数 */
   totalRecords: number;
-  /** 新增记录数 */
   insertedRecords: number;
-  /** 更新的记录数 */
   updatedRecords: number;
-  /** 跳过的记录数 */
   skippedRecords: number;
-  /** 错误信息 */
   error?: string;
-  /** 同步耗时（毫秒） */
   duration: number;
-  /** 同步时间戳 */
   syncedAt: Date;
 }
 
 /**
  * 字段分析结果
+ * @description 用于存储Notion字段分析结果，包含MySQL字段信息
  */
 export interface IFieldAnalysis {
   /** 字段名 */
   name: string;
-  /** Notion属性类型 */
-  notionType: NotionPropertyType;
   /** MySQL字段类型 */
-  mysqlType: MySQLFieldType;
-  /** 字段长度 */
-  length: number;
+  type: MySQLFieldType;
+  /** 字段长度/精度 */
+  length?: number;
+  /** 小数位数 */
+  decimals?: number;
   /** 是否为主键 */
   isPrimaryKey: boolean;
   /** 是否可为空 */
   isNullable: boolean;
-  /** 字段注释 */
+  /** 默认值 */
+  defaultValue?: string | number | null;
+  /** 注释 */
   comment?: string;
+  /** 字符集 */
+  charset?: string;
+  /** 排序规则 */
+  collation?: string;
+  /** Notion属性类型 */
+  notionType: NotionPropertyType;
+  /** MySQL字段类型（冗余字段，用于类型安全） */
+  mysqlType: MySQLFieldType;
 }
 
 /**
  * 数据库Schema分析结果
  */
 export interface ISchemaAnalysis {
-  /** 表名 */
   tableName: string;
-  /** 字段列表 */
   fields: IFieldAnalysis[];
-  /** 主键字段名 */
   primaryKey: string;
-  /** 是否已存在 */
   tableExists: boolean;
+}
+
+/**
+ * Notion API响应基础接口
+ */
+export interface INotionResponse<T> {
+  object: string;
+  results: T[];
+  next_cursor: string | null;
+  has_more: boolean;
+  type: string;
 }
