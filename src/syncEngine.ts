@@ -454,12 +454,25 @@ export class SyncEngine {
   }
 
   /**
-   * 同步单个数据库
+   * 设置Notion数据库ID
    * @param databaseId - Notion数据库ID
+   */
+  setDatabaseId(databaseId: string): void {
+    this.notionClient.setDatabaseId(databaseId);
+  }
+
+  /**
+   * 同步单个数据库（使用已设置的databaseId）
    * @param tableName - MySQL表名
    * @returns Promise<ISyncResult> - 同步结果
    */
-  async syncDatabase(databaseId: string, tableName: string): Promise<ISyncResult> {
+  async syncDatabase(tableName: string): Promise<ISyncResult> {
+    // 使用已设置的databaseId
+    const databaseId = this.notionClient.getDatabaseId();
+    if (!databaseId) {
+      throw new Error('请先调用setDatabaseId设置Notion数据库ID');
+    }
+
     const startTime = Date.now();
     const result: ISyncResult = {
       success: false,
@@ -479,11 +492,9 @@ export class SyncEngine {
       await this.mysqlClient.initialize();
 
       // 2. 创建新的Notion客户端（使用指定的数据库ID）
-      const notionConfig: INotionConfig = {
-        ...this.notionClient.getConfig(),
-        databaseId,
-      };
+      const notionConfig = this.notionClient.getConfig();
       const notionClient = new NotionClient(notionConfig);
+      notionClient.setDatabaseId(databaseId);
 
       // 3. 获取Notion数据
       console.log('📥 正在从Notion获取数据...');
@@ -576,7 +587,9 @@ export class SyncEngine {
       console.log(`📊 进度: ${i + 1}/${databaseConfigs.length}`);
       console.log(`═══════════════════════════════════════════════════════════`);
 
-      const result = await this.syncDatabase(config.databaseId, config.tableName);
+      // 先设置数据库ID，再同步
+      this.setDatabaseId(config.databaseId);
+      const result = await this.syncDatabase(config.tableName);
       results.push(result);
     }
 

@@ -16,8 +16,6 @@
 export interface INotionConfig {
   /** Notion集成密钥（Internal Integration Token） */
   integrationToken: string;
-  /** 目标数据库ID */
-  databaseId: string;
   /** Notion API版本 */
   apiVersion: string;
   /** 请求超时时间（毫秒） */

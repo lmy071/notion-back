@@ -87,6 +87,8 @@ export class NotionClient {
   private client: Client;
   /** 配置对象 */
   private config: INotionConfig;
+  /** 数据库ID（动态设置） */
+  private _databaseId: string;
 
   /**
    * 创建Notion客户端
@@ -96,18 +98,29 @@ export class NotionClient {
   constructor(config?: INotionConfig) {
     this.config = config || getNotionConfig();
 
-    // 验证配置
+    // 验证配置（只需要integrationToken）
     if (!isNotionConfigValid(this.config)) {
       throw new NotionConfigError(
-        'Notion配置无效，请检查NOTION_INTEGRATION_TOKEN和NOTION_DATABASE_ID环境变量'
+        'Notion配置无效，请检查NOTION_INTEGRATION_TOKEN环境变量'
       );
     }
+
+    // 初始化数据库ID（设置为空，后续通过setDatabaseId设置）
+    this._databaseId = '';
 
     // 初始化Notion客户端
     this.client = new Client({
       auth: this.config.integrationToken,
       timeoutMs: this.config.timeoutMs,
     });
+  }
+
+  /**
+   * 设置数据库ID
+   * @param databaseId - Notion数据库ID
+   */
+  setDatabaseId(databaseId: string): void {
+    this._databaseId = databaseId;
   }
 
   /**
@@ -131,7 +144,7 @@ export class NotionClient {
         // 使用 any 类型避免与 Notion API 返回类型不匹配的问题
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const response: any = await this.client.databases.query({
-          database_id: this.config.databaseId,
+          database_id: this._databaseId,
           start_cursor: cursor,
           page_size: 100, // 每次最多获取100条
         });
@@ -168,7 +181,7 @@ export class NotionClient {
   async getDatabaseSchema(): Promise<Record<string, NotionProperty>> {
     try {
       const database = await this.client.databases.retrieve({
-        database_id: this.config.databaseId,
+        database_id: this._databaseId,
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -398,7 +411,7 @@ export class NotionClient {
    * @returns string - 数据库ID
    */
   getDatabaseId(): string {
-    return this.config.databaseId;
+    return this._databaseId;
   }
 
   /**

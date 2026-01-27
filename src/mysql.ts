@@ -6,11 +6,22 @@
 
 import dotenv from 'dotenv';
 import { PoolOptions } from 'mysql2/promise';
+import path from 'path';
 
 /**
- * 加载环境变量配置
+ * 获取环境配置文件路径
+ * @returns 配置文件路径
  */
-dotenv.config();
+function getEnvFilePath(): string {
+  const env = process.env.NODE_ENV || 'development';
+  const envFile = env === 'production' ? '.env.production' : '.env.dev';
+  return path.resolve(process.cwd(), envFile);
+}
+
+// 加载环境变量配置（根据NODE_ENV加载不同配置文件）
+dotenv.config({
+  path: getEnvFilePath(),
+});
 
 /**
  * MySQL连接池配置接口

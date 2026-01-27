@@ -5,11 +5,11 @@
   "description": "Notion数据同步到MySQL工具",
   "main": "dist/notion2mysql.js",
   "scripts": {
-    "build": "tsc",
-    "start": "node ./bin/www",
-    "sync": "node dist/notion2mysql.js",
-    "sync:dev": "ts-node src/notion2mysql.ts",
-    "dev": "ts-node src/notion2mysql.ts"
+    "build": "NODE_ENV=production tsc",
+    "start": "NODE_ENV=production node ./bin/www",
+    "sync": "NODE_ENV=production node dist/notion2mysql.js",
+    "sync:dev": "NODE_ENV=development ts-node src/notion2mysql.ts",
+    "dev": "NODE_ENV=development ts-node src/notion2mysql.ts"
   },
   "dependencies": {
     "@notionhq/client": "^2.2.14",

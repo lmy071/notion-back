@@ -231,12 +231,17 @@ export class MySQLClient {
    * @param isPrimaryKey - 是否为主键
    * @returns IMySQLField - MySQL字段定义
    */
-  private propertyToMySQLField(
+  private   propertyToMySQLField(
     propertyName: string,
     propertyType: NotionPropertyType,
     isPrimaryKey: boolean = false
   ): IMySQLField {
-    const mapping = PROPERTY_TO_MYSQL_MAPPING[propertyType];
+    const mapping = PROPERTY_TO_MYSQL_MAPPING[propertyType] || {
+      mysqlFieldType: MySQLFieldType.VARCHAR,
+      defaultLength: 500,
+      isNullable: true,
+      description: `未知属性类型: ${propertyType}`,
+    };
 
     return {
       name: propertyName,
@@ -327,15 +332,21 @@ export class MySQLClient {
       const fieldName = fieldNames[i];
       // fieldTypes 使用清理后的字段名作为 key
       const propertyType = fieldTypes[fieldName] || 'rich_text';
+      // 获取映射，如果不存在则使用默认值
+      const mapping = PROPERTY_TO_MYSQL_MAPPING[propertyType] || {
+        mysqlFieldType: MySQLFieldType.VARCHAR,
+        defaultLength: 500,
+        isNullable: true,
+      };
 
       fields.push({
         name: fieldName,
-        type: PROPERTY_TO_MYSQL_MAPPING[propertyType].mysqlFieldType,
+        type: mapping.mysqlFieldType,
         notionType: propertyType,
-        mysqlType: PROPERTY_TO_MYSQL_MAPPING[propertyType].mysqlFieldType,
-        length: PROPERTY_TO_MYSQL_MAPPING[propertyType].defaultLength || 0,
+        mysqlType: mapping.mysqlFieldType,
+        length: mapping.defaultLength || 0,
         isPrimaryKey: false,
-        isNullable: PROPERTY_TO_MYSQL_MAPPING[propertyType].isNullable,
+        isNullable: mapping.isNullable,
         comment: `Notion属性: ${fieldName}`,
       });
     }

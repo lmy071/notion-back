@@ -185,7 +185,8 @@ router.get('/status', (req: Request, res: Response) => {
     success: true,
     message: '同步服务就绪',
     config: {
-      notionDatabaseId: getNotionConfig().databaseId ? '***已配置***' : '***未配置***',
+      // 数据库ID从sync_databases表动态获取，此处仅显示配置状态
+      notionIntegrationToken: getNotionConfig().integrationToken ? '***已配置***' : '***未配置***',
       mysqlHost: getMySQLConfig().host,
       mysqlDatabase: getMySQLConfig().database,
     },

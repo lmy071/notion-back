@@ -5,11 +5,22 @@
  */
 
 import dotenv from 'dotenv';
+import path from 'path';
 
 /**
- * 加载环境变量配置
+ * 获取环境配置文件路径
+ * @returns 配置文件路径
  */
-dotenv.config();
+function getEnvFilePath(): string {
+  const env = process.env.NODE_ENV || 'development';
+  const envFile = env === 'production' ? '.env.production' : '.env.dev';
+  return path.resolve(process.cwd(), envFile);
+}
+
+// 加载环境变量配置（根据NODE_ENV加载不同配置文件）
+dotenv.config({
+  path: getEnvFilePath(),
+});
 
 /**
  * Notion API版本配置
@@ -24,8 +35,6 @@ export const NOTION_API_VERSION: string = '2022-06-28';
 export interface INotionConfig {
   /** Notion集成密钥（Internal Integration Token） */
   integrationToken: string;
-  /** 目标数据库ID */
-  databaseId: string;
   /** Notion API版本 */
   apiVersion: string;
   /** 请求超时时间（毫秒） */
@@ -38,7 +47,6 @@ export interface INotionConfig {
  */
 const defaultNotionConfig: Readonly<INotionConfig> = {
   integrationToken: '',
-  databaseId: '',
   apiVersion: NOTION_API_VERSION,
   timeoutMs: 30000, // 30秒
 };
@@ -78,13 +86,12 @@ function getEnvNumber(envKey: string, defaultValue: number): number {
  * ```typescript
  * import { getNotionConfig } from './setting';
  * const config = getNotionConfig();
- * console.log(config.databaseId);
+ * console.log(config.integrationToken);
  * ```
  */
 export function getNotionConfig(): INotionConfig {
   const config: INotionConfig = {
     integrationToken: getEnvValue('NOTION_INTEGRATION_TOKEN', defaultNotionConfig.integrationToken),
-    databaseId: getEnvValue('NOTION_DATABASE_ID', defaultNotionConfig.databaseId),
     apiVersion: getEnvValue('NOTION_API_VERSION', defaultNotionConfig.apiVersion),
     timeoutMs: getEnvNumber('NOTION_TIMEOUT_MS', defaultNotionConfig.timeoutMs),
   };
@@ -107,9 +114,6 @@ export function getNotionConfig(): INotionConfig {
  */
 export function isNotionConfigValid(config: INotionConfig): boolean {
   if (!config.integrationToken || typeof config.integrationToken !== 'string') {
-    return false;
-  }
-  if (!config.databaseId || typeof config.databaseId !== 'string') {
     return false;
   }
   if (!config.apiVersion || typeof config.apiVersion !== 'string') {

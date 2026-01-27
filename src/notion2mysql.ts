@@ -8,7 +8,7 @@ import dotenv from 'dotenv';
 import { SyncEngine, createSyncEngine } from './syncEngine';
 import { INotionConfig, isNotionConfigValid } from './setting';
 import { IMySQLConfig, isMySQLConfigValid } from './mysql';
-import { getDatabaseConfigManager } from './databaseConfig';
+import { getDatabaseConfigManager, IDatabaseConfig } from './databaseConfig';
 
 /**
  * 加载环境变量配置
@@ -21,12 +21,14 @@ dotenv.config();
 interface SyncOptions {
   /** 调试模式 */
   debug?: boolean;
-  /** 表名（单数据库模式） */
-  tableName?: string;
   /** 跳过验证 */
   skipValidation?: boolean;
-  /** 使用配置文件中的数据库列表 */
-  useConfig?: boolean;
+  /** 同步所有数据库 */
+  all?: boolean;
+  /** 指定数据库ID */
+  databaseId?: string;
+  /** 指定表名 */
+  tableName?: string;
 }
 
 /**
@@ -38,16 +40,15 @@ function printHelp(): void {
 
 选项:
   --debug          启用调试模式，输出详细日志
-  --table <name>   指定目标表名（单数据库模式，默认: notion_sync）
-  --use-config     使用配置文件中的数据库列表进行批量同步
-  --help, -h       显示此帮助信息
+  --all            同步所有数据库（从sync_databases表读取配置）
+  --id <id>        指定同步单个数据库（数据库ID或表名）
   --skip-validation  跳过配置验证（仅用于测试）
+  --help, -h       显示此帮助信息
 
 示例:
-  npm run sync                    # 使用单数据库模式同步
-  npm run sync --debug            # 启用调试模式
-  npm run sync --table my_data    # 指定目标表名
-  npm run sync --use-config       # 使用配置文件批量同步所有数据库
+  npm run sync --all           # 同步所有启用的数据库
+  npm run sync --id db1        # 同步指定数据库（数据库ID或表名）
+  npm run sync --debug         # 启用调试模式
   npm run sync --skip-validation  # 跳过配置验证（仅用于测试）
   `);
 }
@@ -68,17 +69,22 @@ function parseArgs(): SyncOptions {
         args.debug = true;
         break;
 
-      case '--table':
-      case '--table-name':
-        if (i + 1 < argv.length) {
-          args.tableName = argv[i + 1];
-          i++; // 跳过下一个参数
-        }
+      case '--all':
+        args.all = true;
         break;
 
-      case '--use-config':
-      case '--config':
-        args.useConfig = true;
+      case '--id':
+      case '--database-id':
+      case '--table':
+        if (i + 1 < argv.length) {
+          const value = argv[i + 1];
+          if (arg === '--table' || arg === '--id') {
+            args.tableName = value;
+          } else {
+            args.databaseId = value;
+          }
+          i++;
+        }
         break;
 
       case '--help':
@@ -87,12 +93,13 @@ function parseArgs(): SyncOptions {
         process.exit(0);
 
       case '--skip-validation':
-      case '--skip-validation':
         args.skipValidation = true;
         break;
 
       default:
-        console.warn(`⚠️  未知参数: ${argv[i]}`);
+        if (!arg.startsWith('--')) {
+          args.tableName = arg;
+        }
     }
   }
 
@@ -111,15 +118,14 @@ function validateConfigs(
 ): boolean {
   let isValid = true;
 
-  // 验证Notion配置
+  // 验证Notion配置（只需要token）
   if (!isNotionConfigValid(notionConfig)) {
     console.error('❌ Notion配置验证失败');
     console.error('   请确保以下环境变量已设置:');
     console.error('   - NOTION_INTEGRATION_TOKEN: Notion集成密钥');
-    console.error('   - NOTION_DATABASE_ID: 目标数据库ID');
     isValid = false;
   } else {
-    console.log('✅ Notion配置通过');
+    console.log('✅ Notion配置验证通过');
   }
 
   // 验证MySQL配置
@@ -139,135 +145,132 @@ function validateConfigs(
 }
 
 /**
- * 单数据库同步模式
+ * 从数据库表获取所有启用的数据库配置
+ * @param mysqlConfig - MySQL配置
+ * @returns Promise<IDatabaseConfig[]> - 数据库配置数组
  */
-async function singleDatabaseSync(
-  options: SyncOptions,
-  notionConfig: INotionConfig,
+async function getDatabasesFromTable(
   mysqlConfig: IMySQLConfig
-): Promise<void> {
-  // 显示配置信息（不显示敏感信息）
-  console.log('');
-  console.log('📋 配置信息:');
-  console.log(`   Notion数据库ID: ${notionConfig.databaseId || '***未配置***'}`);
-  console.log(`   Notion API版本: ${notionConfig.apiVersion}`);
-  console.log(`   MySQL主机: ${mysqlConfig.host}:${mysqlConfig.port}`);
-  console.log(`   MySQL数据库: ${mysqlConfig.database}`);
-  console.log(`   目标表名: ${options.tableName || 'notion_sync'}`);
-  console.log(`   调试模式: ${options.debug ? '开启' : '关闭'}`);
-  console.log('');
-
-  // 创建同步引擎
-  const engine = createSyncEngine({
-    notionConfig,
-    mysqlConfig,
-    tableName: options.tableName,
-    debugMode: options.debug,
+): Promise<IDatabaseConfig[]> {
+  // 动态导入mysql2
+  const mysql = await import('mysql2/promise');
+  const pool = mysql.createPool({
+    host: mysqlConfig.host,
+    port: mysqlConfig.port,
+    user: mysqlConfig.user,
+    password: mysqlConfig.password,
+    database: mysqlConfig.database,
   });
 
-  // 执行同步
   try {
-    const result = await engine.sync();
-
-    // 输出结果
-    console.log('');
-    console.log('═══════════════════════════════════════════════════════════');
-    console.log('📊 同步结果');
-    console.log('═══════════════════════════════════════════════════════════');
-    console.log(`   状态: ${result.success ? '✅ 成功' : '❌ 失败'}`);
-    console.log(`   总记录数: ${result.totalRecords}`);
-    console.log(`   新增/更新记录: ${result.insertedRecords + result.updatedRecords}`);
-    console.log(`   耗时: ${result.duration}ms`);
-    console.log(`   同步时间: ${result.syncedAt.toISOString()}`);
-
-    if (result.error) {
-      console.log(`   错误信息: ${result.error}`);
-    }
-
-    console.log('═══════════════════════════════════════════════════════════');
-
-    // 根据结果退出进程
-    process.exit(result.success ? 0 : 1);
+    const [rows] = await pool.query<any[]>(
+      'SELECT * FROM sync_databases WHERE status = ? ORDER BY id',
+      ['active']
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      notionDatabaseId: row.notion_database_id,
+      tableName: row.table_name,
+      databaseName: row.database_name,
+      status: row.status,
+      syncInterval: row.sync_interval,
+      lastSyncAt: row.last_sync_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      remark: row.remark,
+    }));
   } catch (error) {
-    console.error('');
-    console.error('💥 同步过程中发生未处理的异常:');
-    console.error(`   ${(error as Error).message}`);
-
-    if (options.debug) {
-      console.error('');
-      console.error('堆栈信息:');
-      console.error((error as Error).stack);
-    }
-
-    process.exit(1);
+    console.error('❌ 从数据库表获取配置失败:', (error as Error).message);
+    return [];
+  } finally {
+    await pool.end();
   }
 }
 
 /**
- * 多数据库同步模式（使用配置文件）
+ * 更新数据库的最后同步时间
+ * @param mysqlConfig - MySQL配置
+ * @param databaseId - 数据库ID
  */
-async function multiDatabaseSync(
-  options: SyncOptions,
-  notionConfig: INotionConfig,
-  mysqlConfig: IMySQLConfig
+async function updateLastSyncTime(
+  mysqlConfig: IMySQLConfig,
+  databaseId: number
 ): Promise<void> {
-  // 获取数据库配置管理器
-  const configManager = getDatabaseConfigManager();
+  const mysql = await import('mysql2/promise');
+  const pool = mysql.createPool({
+    host: mysqlConfig.host,
+    port: mysqlConfig.port,
+    user: mysqlConfig.user,
+    password: mysqlConfig.password,
+    database: mysqlConfig.database,
+  });
 
-  // 获取所有启用的数据库配置
-  const databases = configManager.getActiveDatabases();
-
-  if (databases.length === 0) {
-    console.log('');
-    console.log('⚠️  配置文件中没有启用的数据库配置');
-    console.log('💡 提示: 使用 --table 参数进行单数据库同步');
-    process.exit(0);
+  try {
+    await pool.query(
+      'UPDATE sync_databases SET last_sync_at = ?, updated_at = ? WHERE id = ?',
+      [new Date(), new Date(), databaseId]
+    );
+  } catch (error) {
+    console.warn('⚠️  更新同步时间失败:', (error as Error).message);
+  } finally {
+    await pool.end();
   }
+}
 
-  // 显示配置信息
+/**
+ * 同步单个数据库
+ */
+async function syncSingleDatabase(
+  config: IDatabaseConfig,
+  notionConfig: INotionConfig,
+  mysqlConfig: IMySQLConfig,
+  debugMode: boolean
+): Promise<void> {
   console.log('');
-  console.log('📋 配置信息:');
-  console.log(`   MySQL主机: ${mysqlConfig.host}:${mysqlConfig.port}`);
-  console.log(`   MySQL数据库: ${mysqlConfig.database}`);
-  console.log(`   调试模式: ${options.debug ? '开启' : '关闭'}`);
-  console.log('');
-  console.log('📋 待同步数据库列表:');
-  for (const db of databases) {
-    console.log(`   - ${db.notionDatabaseId} -> ${db.tableName} ${db.remark ? `(${db.remark})` : ''}`);
-  }
-  console.log('');
+  console.log(`🚀 开始同步: ${config.notionDatabaseId} -> ${config.tableName}`);
 
-  // 创建同步引擎
+  // 创建同步引擎（databaseId通过setDatabaseId方法设置）
   const engine = createSyncEngine({
     notionConfig,
     mysqlConfig,
-    debugMode: options.debug,
+    tableName: config.tableName,
+    debugMode,
   });
 
-  // 执行批量同步
+  // 设置数据库ID并同步
+  engine.setDatabaseId(config.notionDatabaseId);
+  const result = await engine.syncDatabase(config.tableName);
+
   try {
-    const databaseConfigs = databases.map((db) => ({
-      databaseId: db.notionDatabaseId,
-      tableName: db.tableName,
-    }));
+    const result = await engine.sync();
 
-    const results = await engine.syncAllDatabases(databaseConfigs);
-
-    // 检查是否有失败的同步
-    const hasFailure = results.some((r) => !r.success);
-    process.exit(hasFailure ? 1 : 0);
-  } catch (error) {
-    console.error('');
-    console.error('💥 同步过程中发生未处理的异常:');
-    console.error(`   ${(error as Error).message}`);
-
-    if (options.debug) {
-      console.error('');
-      console.error('堆栈信息:');
-      console.error((error as Error).stack);
+    if (result.success) {
+      console.log(`✅ 同步成功: ${result.totalRecords} 条记录`);
+    } else {
+      console.error(`❌ 同步失败: ${result.error}`);
     }
 
-    process.exit(1);
+    // 更新同步时间
+    await updateLastSyncTime(mysqlConfig, config.id);
+  } catch (error) {
+    console.error(`❌ 同步异常: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * 加载环境变量配置
+ * 重新加载以确保在运行时读取正确的配置文件
+ */
+function loadEnvConfig(): void {
+  const path = require('path');
+  const env = process.env.NODE_ENV || 'development';
+  const envFile = env === 'production' ? '.env.production' : '.env.dev';
+  const envPath = path.resolve(process.cwd(), envFile);
+
+  try {
+    dotenv.config({ path: envPath });
+  } catch (error) {
+    // 忽略错误，继续执行
   }
 }
 
@@ -275,6 +278,9 @@ async function multiDatabaseSync(
  * 主函数
  */
 async function main(): Promise<void> {
+  // 重新加载环境变量配置
+  loadEnvConfig();
+
   console.log('╔════════════════════════════════════════════════════════════╗');
   console.log('║     Notion数据库同步到MySQL - 数据同步工具 v1.0.0          ║');
   console.log('╚════════════════════════════════════════════════════════════╝');
@@ -294,18 +300,91 @@ async function main(): Promise<void> {
   if (!options.skipValidation) {
     if (!validateConfigs(notionConfig, mysqlConfig)) {
       console.log('');
-      console.error('💡 提示: 运行 --skip-validation 可跳过配置验证（仅用于测试）');
+      console.error('💡 提示: 运行 --skip-validation 可跳过配置验证');
       process.exit(1);
     }
   } else {
     console.log('⚠️  跳过配置验证（仅用于测试）');
   }
 
-  // 根据选项选择同步模式
-  if (options.useConfig) {
-    await multiDatabaseSync(options, notionConfig, mysqlConfig);
+  // 显示配置信息
+  console.log('');
+  console.log('📋 配置信息:');
+  console.log(`   Notion API版本: ${notionConfig.apiVersion}`);
+  console.log(`   MySQL主机: ${mysqlConfig.host}:${mysqlConfig.port}`);
+  console.log(`   MySQL数据库: ${mysqlConfig.database}`);
+  console.log(`   调试模式: ${options.debug ? '开启' : '关闭'}`);
+
+  // 从数据库表获取所有启用的数据库配置
+  console.log('');
+  console.log('📥 从sync_databases表读取数据库配置...');
+  const databases = await getDatabasesFromTable(mysqlConfig);
+
+  if (databases.length === 0) {
+    console.error('❌ 没有找到启用的数据库配置');
+    console.log('💡 请在sync_databases表中添加配置:');
+    console.log(`
+    INSERT INTO sync_databases (notion_database_id, table_name, database_name, status, remark)
+    VALUES ('your-notion-database-id', 'your_table_name', 'notion_sync', 'active', '备注');
+    `);
+    process.exit(1);
+  }
+
+  console.log(`✅ 找到 ${databases.length} 个启用的数据库配置`);
+
+  // 同步模式
+  if (options.all) {
+    // 同步所有数据库
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('📦 批量同步所有数据库');
+    console.log('═══════════════════════════════════════════════════════════');
+
+    for (const db of databases) {
+      await syncSingleDatabase(db, notionConfig, mysqlConfig, options.debug || false);
+    }
+
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('📊 批量同步完成');
+    console.log('═══════════════════════════════════════════════════════════');
+  } else if (options.databaseId || options.tableName) {
+    // 同步指定数据库
+    const targetId = options.databaseId || options.tableName;
+    const targetDb = databases.find(
+      (db) => db.notionDatabaseId === targetId || db.tableName === targetId
+    );
+
+    if (!targetDb) {
+      console.error(`❌ 未找到数据库配置: ${targetId}`);
+      console.log('💡 可用配置:');
+      for (const db of databases) {
+        console.log(`   - ${db.notionDatabaseId} (表: ${db.tableName})`);
+      }
+      process.exit(1);
+    }
+
+    await syncSingleDatabase(targetDb, notionConfig, mysqlConfig, options.debug || false);
   } else {
-    await singleDatabaseSync(options, notionConfig, mysqlConfig);
+    // 默认同步所有数据库
+    console.log('');
+    console.log('💡 未指定同步模式，默认同步所有数据库');
+    console.log('💡 使用 --all 或 --id <id> 指定同步模式');
+
+    console.log('');
+    console.log('📋 待同步数据库列表:');
+    for (const db of databases) {
+      console.log(`   - ${db.notionDatabaseId} -> ${db.tableName} ${db.remark ? `(${db.remark})` : ''}`);
+    }
+
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('📦 批量同步所有数据库');
+    console.log('═══════════════════════════════════════════════════════════');
+
+    for (const db of databases) {
+      await syncSingleDatabase(db, notionConfig, mysqlConfig, options.debug || false);
+    }
   }
 }
 
