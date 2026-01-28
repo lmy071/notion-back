@@ -609,6 +609,83 @@ export class MySQLClient {
       throw new MySQLQueryError('统计记录数失败', sql);
     }
   }
+
+  /**
+   * 查询表的所有记录（支持分页）
+   * @param tableName - 表名
+   * @param options - 查询选项
+   * @returns Promise<{ list: RowDataPacket[]; total: number }> - 记录列表和总数
+   */
+  async findAll(
+    tableName: string,
+    options?: {
+      page?: number;
+      pageSize?: number;
+      orderBy?: string;
+      orderDir?: 'ASC' | 'DESC';
+    }
+  ): Promise<{ list: RowDataPacket[]; total: number }> {
+    const pool = this.getPool();
+    const page = options?.page || 1;
+    const pageSize = options?.pageSize || 20;
+    const offset = (page - 1) * pageSize;
+    const orderBy = options?.orderBy || 'created_time';
+    const orderDir = options?.orderDir || 'DESC';
+
+    // 查询总数
+    const countSql = `SELECT COUNT(*) as count FROM \`${tableName}\``;
+    try {
+      const [countRows] = await pool.query<RowDataPacket[]>(countSql);
+      const total = countRows[0]?.count || 0;
+      if (total === 0) {
+        return { list: [], total: 0 };
+      }
+
+      // 查询列表
+      const listSql = `
+        SELECT * FROM \`${tableName}\`
+        ORDER BY \`${orderBy}\` ${orderDir}
+        LIMIT ? OFFSET ?
+      `;
+      const [listRows] = await pool.query<RowDataPacket[]>(listSql, [pageSize, offset]);
+
+      return { list: listRows, total };
+    } catch (error) {
+      throw new MySQLQueryError(`查询表数据失败: ${tableName}`, countSql);
+    }
+  }
+
+  /**
+   * 根据ID查询表的记录
+   * @param tableName - 表名
+   * @param id - 记录ID
+   * @returns Promise<RowDataPacket | null> - 记录数据
+   */
+  async findRecordById(
+    tableName: string,
+    id: string
+  ): Promise<RowDataPacket | null> {
+    return this.findById(tableName, id);
+  }
+
+  /**
+   * 执行自定义查询（仅用于已验证的查询）
+   * @param sql - SQL语句
+   * @param params - 查询参数
+   * @returns Promise<RowDataPacket[]> - 查询结果
+   */
+  async query<T extends RowDataPacket[]>(
+    sql: string,
+    params?: unknown[]
+  ): Promise<T> {
+    const pool = this.getPool();
+    try {
+      const [rows] = await pool.query<T>(sql, params);
+      return rows;
+    } catch (error) {
+      throw new MySQLQueryError(`查询失败: ${(error as Error).message}`, sql);
+    }
+  }
 }
 
 /**

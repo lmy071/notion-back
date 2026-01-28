@@ -715,3 +715,87 @@ export interface INotionResponse<T> {
   has_more: boolean;
   type: string;
 }
+
+/**
+ * ============================================
+ * sync_databases 表类型定义
+ * ============================================
+ */
+
+/**
+ * 同步数据库配置状态枚举
+ */
+export type SyncDatabaseStatus = 'active' | 'inactive';
+
+/**
+ * 同步数据库配置接口
+ * 对应 sync_databases 表结构
+ */
+export interface ISyncDatabase {
+  /** 配置ID */
+  id: number;
+  /** Notion数据库ID */
+  notionDatabaseId: string;
+  /** MySQL表名 */
+  tableName: string;
+  /** 数据库名称 */
+  databaseName: string;
+  /** 同步状态 */
+  status: SyncDatabaseStatus;
+  /** 同步间隔（秒） */
+  syncInterval: number;
+  /** 上次同步时间 */
+  lastSyncAt: Date | null;
+  /** 创建时间 */
+  createdAt: Date;
+  /** 更新时间 */
+  updatedAt: Date;
+  /** 备注 */
+  remark: string | null;
+}
+
+/**
+ * 创建同步数据库配置请求
+ */
+export interface ICreateSyncDatabaseRequest {
+  /** Notion数据库ID */
+  notionDatabaseId: string;
+  /** MySQL表名 */
+  tableName: string;
+  /** 数据库名称 */
+  databaseName: string;
+  /** 同步状态 */
+  status?: SyncDatabaseStatus;
+  /** 同步间隔（秒） */
+  syncInterval?: number;
+  /** 备注 */
+  remark?: string;
+}
+
+/**
+ * 更新同步数据库配置请求
+ */
+export interface IUpdateSyncDatabaseRequest {
+  /** MySQL表名 */
+  tableName?: string;
+  /** 数据库名称 */
+  databaseName?: string;
+  /** 同步状态 */
+  status?: SyncDatabaseStatus;
+  /** 同步间隔（秒） */
+  syncInterval?: number;
+  /** 备注 */
+  remark?: string;
+}
+
+/**
+ * 同步数据库列表查询参数
+ */
+export interface ISyncDatabaseListQuery {
+  /** 状态筛选 */
+  status?: SyncDatabaseStatus;
+  /** 页码 */
+  page?: number;
+  /** 每页数量 */
+  pageSize?: number;
+}

@@ -7,7 +7,10 @@ var logger = require('morgan');
 // TypeScript 路由编译后加载
 var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');
-var syncRouter = require('./routes/sync');
+var syncRouter = require('./dist/routes/sync').default;
+
+// 导入 API 日志中间件
+var apilogger = require('./dist/apilogger').default;
 
 var app = express();
 
@@ -20,6 +23,10 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// 应用 API 日志中间件（在路由之前）
+// 自动记录所有 /api 开头的接口调用
+app.use(apilogger);
 
 app.use('/', indexRouter);
 app.use('/users', usersRouter);

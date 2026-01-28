@@ -12,6 +12,15 @@
 | `sync_logs` | 记录每次同步的执行情况 |
 | `notion_sync` | 示例数据表（实际结构会根据Notion数据库字段动态生成） |
 
+### user.sql
+
+用户认证表初始化脚本，包含以下表结构：
+
+| 表名 | 说明 |
+|------|------|
+| `users` | 用户账户表，存储用户注册信息 |
+| `user_tokens` | 用户Token表，存储登录Token |
+
 ## 使用方法
 
 ### 1. 执行初始化脚本
@@ -24,7 +33,17 @@ mysql -u root -p < src/mysql/init.sql
 source /path/to/notion-node/src/mysql/init.sql
 ```
 
-### 2. 添加新的数据库配置
+### 2. 执行用户表初始化脚本
+
+```bash
+# 在MySQL命令行中执行
+mysql -u root -p < src/mysql/user.sql
+
+# 或者在MySQL命令行中
+source /path/to/notion-node/src/mysql/user.sql
+```
+
+### 3. 添加新的数据库配置
 
 ```sql
 USE notion_sync;
@@ -33,7 +52,7 @@ INSERT INTO sync_databases (notion_database_id, table_name, database_name, remar
 VALUES ('新的Notion数据库ID', '新表名', 'notion_sync', '备注说明');
 ```
 
-### 3. 常用查询
+### 4. 常用查询
 
 ```sql
 -- 查看所有同步配置
@@ -44,6 +63,9 @@ SELECT * FROM sync_logs ORDER BY created_at DESC LIMIT 100;
 
 -- 查看特定数据库的同步历史
 SELECT * FROM sync_logs WHERE notion_database_id = '你的数据库ID' ORDER BY created_at DESC;
+
+-- 查看所有用户
+SELECT id, username, email, status, created_at FROM users;
 ```
 
 ## 字段说明
