@@ -4,7 +4,7 @@
  * @description 提供 sync_databases 表的增删改查操作
  */
 
-import { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
+import { RowDataPacket } from 'mysql2/promise';
 import { MySQLClient, MySQLQueryError } from './mysqlClient';
 import {
   ISyncDatabase,
@@ -13,6 +13,15 @@ import {
   ISyncDatabaseListQuery,
   SyncDatabaseStatus,
 } from './types';
+
+/**
+ * ResultSetHeader 类型声明（用于 INSERT/UPDATE/DELETE 操作）
+ */
+interface ResultSetHeader {
+  affectedRows: number;
+  insertId: number;
+  warningStatus: number;
+}
 
 /**
  * 查询表数据的请求参数
@@ -121,8 +130,12 @@ export class SyncDatabaseService {
     ];
 
     try {
-      const [result] = await pool.query<ResultSetHeader>(sql, params);
-      return this.findById(result.insertId);
+      const [result] = await pool.query(sql, params);
+      const created = await this.findById(result.insertId);
+      if (!created) {
+        throw new Error('创建后查询失败');
+      }
+      return created;
     } catch (error) {
       if (error instanceof MySQLQueryError) {
         throw error;
@@ -145,7 +158,7 @@ export class SyncDatabaseService {
     const sql = `SELECT * FROM \`${this.tableName}\` WHERE \`id\` = ?`;
 
     try {
-      const [rows] = await pool.query<RowDataPacket[]>(sql, [id]);
+      const [rows] = await pool.query(sql, [id]);
       if (rows.length === 0) {
         return null;
       }
@@ -165,7 +178,7 @@ export class SyncDatabaseService {
     const sql = `SELECT * FROM \`${this.tableName}\` WHERE \`notion_database_id\` = ?`;
 
     try {
-      const [rows] = await pool.query<RowDataPacket[]>(sql, [notionDatabaseId]);
+      const [rows] = await pool.query(sql, [notionDatabaseId]);
       if (rows.length === 0) {
         return null;
       }
@@ -185,7 +198,7 @@ export class SyncDatabaseService {
     const sql = `SELECT * FROM \`${this.tableName}\` WHERE \`table_name\` = ?`;
 
     try {
-      const [rows] = await pool.query<RowDataPacket[]>(sql, [tableName]);
+      const [rows] = await pool.query(sql, [tableName]);
       if (rows.length === 0) {
         return null;
       }
@@ -220,7 +233,7 @@ export class SyncDatabaseService {
     // 查询总数
     const countSql = `SELECT COUNT(*) as count FROM \`${this.tableName}\` ${whereClause}`;
     try {
-      const [countRows] = await pool.query<RowDataPacket[]>(countSql, params);
+      const [countRows] = await pool.query(countSql, params);
       const total = countRows[0]?.count || 0;
       if (total === 0) {
         return { list: [], total: 0 };
@@ -233,7 +246,7 @@ export class SyncDatabaseService {
         ORDER BY \`created_at\` DESC
         LIMIT ? OFFSET ?
       `;
-      const [listRows] = await pool.query<RowDataPacket[]>(listSql, [...params, pageSize, offset]);
+      const [listRows] = await pool.query(listSql, [...params, pageSize, offset]);
 
       return {
         list: listRows.map((row) => this.rowToSyncDatabase(row)),
@@ -286,11 +299,12 @@ export class SyncDatabaseService {
     params.push(id);
 
     try {
-      const [result] = await pool.query<ResultSetHeader>(sql, params);
+      const [result] = await pool.query(sql, params);
       if (result.affectedRows === 0) {
         return null;
       }
-      return this.findById(id);
+      const updated = await this.findById(id);
+      return updated;
     } catch (error) {
       if (error instanceof MySQLQueryError) {
         throw error;
@@ -313,7 +327,7 @@ export class SyncDatabaseService {
     const sql = `DELETE FROM \`${this.tableName}\` WHERE \`id\` = ?`;
 
     try {
-      const [result] = await pool.query<ResultSetHeader>(sql, [id]);
+      const [result] = await pool.query(sql, [id]);
       return result.affectedRows > 0;
     } catch (error) {
       throw new MySQLQueryError(`删除同步数据库配置失败: ${(error as Error).message}`, sql);
@@ -325,7 +339,7 @@ export class SyncDatabaseService {
    * @returns Promise<ISyncDatabase[]> - 启用的配置列表
    */
   async findActive(): Promise<ISyncDatabase[]> {
-    const pool = (this.mysqlClient as unknown as { getPool: () => { query: (sql: string, params: unknown[]) => Promise<[RowDataPacket[], unknown[]]> } }).getPool();
+    const pool = (this.mysqlClient as unknown as { getPool: () => { query: (sql: string, params?: unknown[]) => Promise<[RowDataPacket[], unknown[]]> } }).getPool();
     const sql = `
       SELECT * FROM \`${this.tableName}\`
       WHERE \`status\` = 'active'
@@ -333,7 +347,7 @@ export class SyncDatabaseService {
     `;
 
     try {
-      const [rows] = await pool.query<RowDataPacket[]>(sql);
+      const [rows] = await pool.query(sql, []);
       return rows.map((row) => this.rowToSyncDatabase(row));
     } catch (error) {
       throw new MySQLQueryError('查询启用的同步数据库配置失败', sql);
@@ -350,7 +364,7 @@ export class SyncDatabaseService {
     const sql = `UPDATE \`${this.tableName}\` SET \`last_sync_at\` = NOW() WHERE \`id\` = ?`;
 
     try {
-      const [result] = await pool.query<ResultSetHeader>(sql, [id]);
+      const [result] = await pool.query(sql, [id]);
       return result.affectedRows > 0;
     } catch (error) {
       throw new MySQLQueryError(`更新最后同步时间失败: ${(error as Error).message}`, sql);

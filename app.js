@@ -6,7 +6,7 @@ var logger = require('morgan');
 
 // TypeScript 路由编译后加载
 var indexRouter = require('./routes/index');
-var usersRouter = require('./routes/users');
+var userRouter = require('./dist/routes/user').default;
 var syncRouter = require('./dist/routes/sync').default;
 
 // 导入 API 日志中间件
@@ -29,7 +29,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(apilogger);
 
 app.use('/', indexRouter);
-app.use('/users', usersRouter);
+
+// 用户API路由
+app.use('/api/user', userRouter);
 
 // 同步API路由
 app.use('/api/sync', syncRouter);

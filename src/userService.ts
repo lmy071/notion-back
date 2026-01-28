@@ -253,18 +253,30 @@ export class UserService {
     const passwordHash = await this.hashPassword(password);
 
     // 插入用户
-    const [result] = await pool.query<ResultSetHeader>(
+    const insertResult = await pool.query(
       'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)',
       [username, email, passwordHash]
     );
 
+    // mysql2 的 INSERT 返回 ResultSetHeader，需要正确解析
+    const result = Array.isArray(insertResult) ? insertResult[0] : insertResult;
+    const newUserId = (result as { insertId?: number }).insertId;
+
+    if (newUserId === undefined || newUserId === 0) {
+      throw new UserServiceError('用户创建失败', 'INSERT_FAILED');
+    }
+
     // 获取创建的用户
     const [users] = await pool.query<RowDataPacket[]>(
       'SELECT id, username, email, status, created_at, updated_at, last_login_at FROM users WHERE id = ?',
-      [result.insertId]
+      [newUserId]
     );
 
     const user = users[0];
+    if (!user) {
+      throw new UserServiceError('获取用户信息失败', 'USER_NOT_FOUND');
+    }
+
     return {
       id: user.id,
       username: user.username,
@@ -323,7 +335,7 @@ export class UserService {
     };
 
     const accessToken = this.generateToken(payload);
-    const refreshToken = this.generateRefreshToken(user.id);
+    const refreshToken = await this.generateRefreshToken(user.id);
 
     // 更新最后登录时间
     await pool.query('UPDATE users SET last_login_at = NOW() WHERE id = ?', [user.id]);
@@ -354,6 +366,8 @@ export class UserService {
     const payload: TokenPayload = {
       userId,
       type: 'refresh',
+      username: '',
+      email: '',
     };
 
     const refreshToken = this.generateToken(payload);
@@ -430,10 +444,6 @@ export class UserService {
     const pool = this.getPool();
 
     // 撤销Refresh Token（如果有的话）
-    // 由于我们使用简单的Token机制，这里主要清除客户端的Token
-    // 如果要实现更严格的登出，可以将Token加入黑名单
-
-    // 检查是否是Refresh Token，如果是则撤销
     const payload = this.verifyToken(token);
     if (payload && payload.type === 'refresh') {
       await pool.query('UPDATE user_tokens SET revoked_at = NOW() WHERE token = ?', [token]);
@@ -506,20 +516,13 @@ export class UserService {
    */
   async cleanupExpiredTokens(): Promise<number> {
     const pool = this.getPool();
-    const [result] = await pool.query<ResultSetHeader>(
+    const result = await pool.query(
       'DELETE FROM user_tokens WHERE expires_at < NOW()'
     );
-    return result.affectedRows;
+    // mysql2 的 DELETE 返回 ResultSetHeader
+    const resultData = Array.isArray(result) ? result[0] : result;
+    return (resultData as { affectedRows?: number }).affectedRows || 0;
   }
-}
-
-/**
- * ResultSetHeader类型声明
- */
-interface ResultSetHeader {
-  affectedRows: number;
-  insertId: number;
-  warningStatus: number;
 }
 
 /**

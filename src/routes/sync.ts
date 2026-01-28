@@ -299,7 +299,7 @@ router.get('/databases/:id', async (req: Request, res: Response, next: NextFunct
       data: database,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 
@@ -353,7 +353,7 @@ router.post('/databases', async (req: Request, res: Response, next: NextFunction
         message: (error as Error).message,
       });
     }
-    next(error);
+    return next(error);
   }
 });
 
@@ -412,7 +412,7 @@ router.put('/databases/:id', async (req: Request, res: Response, next: NextFunct
         message: (error as Error).message,
       });
     }
-    next(error);
+    return next(error);
   }
 });
 
@@ -447,7 +447,7 @@ router.delete('/databases/:id', async (req: Request, res: Response, next: NextFu
       message: '删除成功',
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 
@@ -541,7 +541,7 @@ router.post('/databases/:id/sync', async (req: Request, res: Response, next: Nex
       });
     }
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 
@@ -612,7 +612,7 @@ router.post('/database/sync', async (req: Request, res: Response, next: NextFunc
       });
     }
   } catch (error) {
-    next(error);
+    return next(error);
   }
 });
 
@@ -666,7 +666,7 @@ router.get('/table/:tableName', async (req: Request, res: Response, next: NextFu
         message: (error as Error).message,
       });
     }
-    next(error);
+    return next(error);
   }
 });
 
@@ -698,7 +698,7 @@ router.get('/table/:tableName/count', async (req: Request, res: Response, next: 
         message: (error as Error).message,
       });
     }
-    next(error);
+    return next(error);
   }
 });
 
@@ -734,7 +734,7 @@ router.get('/table/:tableName/:id', async (req: Request, res: Response, next: Ne
         message: (error as Error).message,
       });
     }
-    next(error);
+    return next(error);
   }
 });
 

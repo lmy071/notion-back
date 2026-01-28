@@ -85,7 +85,7 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
         code: error.code,
       });
     }
-    next(error);
+    return next(error);
   }
 });
 
@@ -161,7 +161,7 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
         code: error.code,
       });
     }
-    next(error);
+    return next(error);
   }
 });
 
@@ -266,7 +266,7 @@ router.post('/refresh', async (req: Request, res: Response, next: NextFunction) 
         code: error.code,
       });
     }
-    next(error);
+    return next(error);
   }
 });
 
@@ -304,7 +304,7 @@ router.get(
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       data: { user: userInfo },
     });
@@ -328,7 +328,7 @@ router.get(
  */
 router.get(
   '/info',
-  createAuthMiddleware((token: string) => getUserService().verifyToken(), ['GET /api/user/info']),
+  createAuthMiddleware((token: string) => getUserService().verifyToken(token), ['GET /api/user/info']),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const userId = parseInt(req.query.id as string, 10);
@@ -359,7 +359,7 @@ router.get(
         data: { user },
       });
     } catch (error) {
-      next(error);
+      return next(error);
     }
   }
 );
@@ -409,7 +409,7 @@ function handleAuthError(
   err: Error,
   req: Request,
   res: Response,
-  _next: NextFunction
+  next: NextFunction
 ): void {
   if (err instanceof AuthError) {
     res.status(err.statusCode).json({

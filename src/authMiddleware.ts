@@ -162,7 +162,7 @@ export function authErrorHandler(
   err: Error,
   req: Request,
   res: Response,
-  _next: NextFunction
+  next: NextFunction
 ): void {
   if (err instanceof AuthError) {
     res.status(err.statusCode).json({

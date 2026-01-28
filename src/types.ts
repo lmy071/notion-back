@@ -799,3 +799,74 @@ export interface ISyncDatabaseListQuery {
   /** 每页数量 */
   pageSize?: number;
 }
+
+/**
+ * ============================================
+ * 用户认证类型定义
+ * ============================================
+ */
+
+/**
+ * 用户状态枚举
+ */
+export type UserStatus = 'active' | 'inactive' | 'banned';
+
+/**
+ * 用户信息接口
+ */
+export interface IUser {
+  /** 用户ID */
+  id: number;
+  /** 用户名 */
+  username: string;
+  /** 邮箱 */
+  email: string;
+  /** 密码哈希 */
+  password_hash: string;
+  /** 用户状态 */
+  status: UserStatus;
+  /** 创建时间 */
+  created_at: Date;
+  /** 更新时间 */
+  updated_at: Date;
+  /** 最后登录时间 */
+  last_login_at: Date | null;
+}
+
+/**
+ * 用户Token信息接口
+ */
+export interface IUserToken {
+  /** Token ID */
+  id: number;
+  /** 用户ID */
+  user_id: number;
+  /** Token字符串 */
+  token: string;
+  /** Token类型 */
+  token_type: string;
+  /** 过期时间 */
+  expires_at: Date;
+  /** 撤销时间 */
+  revoked_at: Date | null;
+  /** 创建时间 */
+  created_at: Date;
+}
+
+/**
+ * Token载荷接口
+ */
+export interface TokenPayload {
+  /** 用户ID */
+  userId: number;
+  /** 用户名 */
+  username: string;
+  /** 邮箱 */
+  email: string;
+  /** Token类型（可选，refresh token时为'refresh'） */
+  type?: string;
+  /** 签发时间 */
+  iat?: number;
+  /** 过期时间 */
+  exp?: number;
+}
