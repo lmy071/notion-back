@@ -403,6 +403,70 @@ router.get(
 );
 
 /**
+ * POST /api/user/master-token
+ * 生成万能Token（永不过期，用于系统同步等）
+ *
+ * 请求体:
+ * {
+ *   userId: number,  // 用户ID (必填)
+ * }
+ *
+ * 响应:
+ * {
+ *   success: boolean,
+ *   message: string,
+ *   data: {
+ *     masterToken: string,
+ *     user: { id, username, email }
+ *   }
+ * }
+ */
+router.post('/master-token', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'userId是必填项',
+        code: 'MISSING_FIELDS',
+      });
+    }
+
+    const service = getUserService();
+    await service.initialize();
+
+    // 获取用户信息
+    const user = await service.getUserById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: '用户不存在',
+        code: 'USER_NOT_FOUND',
+      });
+    }
+
+    // 生成万能Token
+    const masterToken = service.generateMasterToken(user.id, user.username, user.email);
+
+    res.json({
+      success: true,
+      message: '万能Token生成成功（永不过期，请妥善保管）',
+      data: {
+        masterToken,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * 认证错误处理中间件
  */
 function handleAuthError(

@@ -138,9 +138,10 @@ export class UserService {
   /**
    * 生成Token
    * @param payload - Token载荷
+   * @param expiresIn - 过期时间（毫秒），不传则使用默认配置
    * @returns Token字符串
    */
-  generateToken(payload: TokenPayload): string {
+  generateToken(payload: TokenPayload, expiresIn?: number): string {
     const header = Buffer.from(
       JSON.stringify({ alg: 'HS256', typ: 'JWT' })
     ).toString('base64url');
@@ -149,7 +150,8 @@ export class UserService {
     const tokenPayload = {
       ...payload,
       iat: now,
-      exp: now + this.tokenConfig.accessTokenExpiresIn,
+      // 如果指定了过期时间则使用，否则使用默认配置（不传则永不过期）
+      exp: expiresIn !== undefined ? now + expiresIn : undefined,
     };
 
     const encodedPayload = Buffer.from(JSON.stringify(tokenPayload)).toString(
@@ -162,6 +164,24 @@ export class UserService {
       .digest('base64url');
 
     return `${this.tokenConfig.tokenPrefix}${header}.${encodedPayload}.${signature}`;
+  }
+
+  /**
+   * 生成万能 Token（永不过期）
+   * @param userId - 用户ID
+   * @param username - 用户名
+   * @param email - 邮箱
+   * @returns 万能Token字符串
+   */
+  generateMasterToken(userId: number, username: string, email: string): string {
+    const payload: TokenPayload = {
+      userId,
+      username,
+      email,
+      type: 'master',
+    };
+    // 不设置 exp 字段，永不过期
+    return this.generateToken(payload, undefined);
   }
 
   /**
@@ -201,8 +221,8 @@ export class UserService {
         Buffer.from(payloadB64, 'base64url').toString()
       );
 
-      // 检查过期时间
-      if (payload.exp && payload.exp < Date.now()) {
+      // 检查过期时间（万能Token type=master 永不过期）
+      if (payload.type !== 'master' && payload.exp && payload.exp < Date.now()) {
         return null;
       }
 

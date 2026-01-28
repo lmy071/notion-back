@@ -10,6 +10,8 @@ import { getNotionConfig } from '../setting';
 import { getMySQLConfig } from '../mysql';
 import { ISyncResult, ISyncDatabase } from '../types';
 import { SyncDatabaseService, createSyncDatabaseService } from '../syncDatabaseService';
+import { createAuthMiddleware } from '../authMiddleware';
+import { createUserService } from '../userService';
 
 const router = Router();
 
@@ -22,6 +24,21 @@ let syncEngine: SyncEngine | null = null;
  * 数据库配置服务实例缓存
  */
 let syncDatabaseService: SyncDatabaseService | null = null;
+
+/**
+ * 用户服务实例缓存
+ */
+let userService: ReturnType<typeof createUserService> | null = null;
+
+/**
+ * 获取用户服务实例
+ */
+function getUserService() {
+  if (!userService) {
+    userService = createUserService();
+  }
+  return userService;
+}
 
 /**
  * 获取同步引擎实例
@@ -232,80 +249,83 @@ router.get('/status', (req: Request, res: Response) => {
 
 /**
  * GET /api/sync/databases
- * 获取同步数据库配置列表
- *
- * 查询参数:
- * - status: 状态筛选 (active/inactive)
- * - page: 页码 (默认1)
- * - pageSize: 每页数量 (默认20)
+ * 获取同步数据库配置列表（需要认证）
  */
-router.get('/databases', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const service = getSyncDatabaseService();
-    await service.initialize();
+router.get(
+  '/databases',
+  createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const service = getSyncDatabaseService();
+      await service.initialize();
 
-    const { status, page, pageSize } = req.query;
+      const { status, page, pageSize } = req.query;
 
-    const result = await service.findAll({
-      status: status as 'active' | 'inactive' | undefined,
-      page: page ? parseInt(page as string, 10) : undefined,
-      pageSize: pageSize ? parseInt(pageSize as string, 10) : undefined,
-    });
+      const result = await service.findAll({
+        status: status as 'active' | 'inactive' | undefined,
+        page: page ? parseInt(page as string, 10) : undefined,
+        pageSize: pageSize ? parseInt(pageSize as string, 10) : undefined,
+      });
 
-    res.json({
-      success: true,
-      message: '获取成功',
-      data: {
-        list: result.list,
-        total: result.total,
-        page: parseInt(page as string, 10) || 1,
-        pageSize: parseInt(pageSize as string, 10) || 20,
-      },
-    });
-  } catch (error) {
-    next(error);
+      res.json({
+        success: true,
+        message: '获取成功',
+        data: {
+          list: result.list,
+          total: result.total,
+          page: parseInt(page as string, 10) || 1,
+          pageSize: parseInt(pageSize as string, 10) || 20,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
   }
-});
+);
 
 /**
  * GET /api/sync/databases/:id
- * 获取同步数据库配置详情
+ * 获取同步数据库配置详情（需要认证）
  */
-router.get('/databases/:id', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const service = getSyncDatabaseService();
-    await service.initialize();
+router.get(
+  '/databases/:id',
+  createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const service = getSyncDatabaseService();
+      await service.initialize();
 
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
-      return res.status(400).json({
-        success: false,
-        message: '无效的ID',
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) {
+        return res.status(400).json({
+          success: false,
+          message: '无效的ID',
+        });
+      }
+
+      const database = await service.findById(id);
+
+      if (!database) {
+        return res.status(404).json({
+          success: false,
+          message: '配置不存在',
+        });
+      }
+
+      res.json({
+        success: true,
+        message: '获取成功',
+        data: database,
       });
+    } catch (error) {
+      return next(error);
     }
-
-    const database = await service.findById(id);
-
-    if (!database) {
-      return res.status(404).json({
-        success: false,
-        message: '配置不存在',
-      });
-    }
-
-    res.json({
-      success: true,
-      message: '获取成功',
-      data: database,
-    });
-  } catch (error) {
-    return next(error);
   }
-});
+);
 
 /**
  * POST /api/sync/databases
- * 创建同步数据库配置
+ * 创建同步数据库配置（需要认证）
  *
  * 请求体:
  * {
@@ -317,49 +337,53 @@ router.get('/databases/:id', async (req: Request, res: Response, next: NextFunct
  *   remark?: string            // 备注
  * }
  */
-router.post('/databases', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const service = getSyncDatabaseService();
-    await service.initialize();
+router.post(
+  '/databases',
+  createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const service = getSyncDatabaseService();
+      await service.initialize();
 
-    const { notionDatabaseId, tableName, databaseName, status, syncInterval, remark } = req.body;
+      const { notionDatabaseId, tableName, databaseName, status, syncInterval, remark } = req.body;
 
-    // 参数验证
-    if (!notionDatabaseId || !tableName || !databaseName) {
-      return res.status(400).json({
-        success: false,
-        message: '缺少必填参数: notionDatabaseId, tableName, databaseName',
+      // 参数验证
+      if (!notionDatabaseId || !tableName || !databaseName) {
+        return res.status(400).json({
+          success: false,
+          message: '缺少必填参数: notionDatabaseId, tableName, databaseName',
+        });
+      }
+
+      const database = await service.create({
+        notionDatabaseId,
+        tableName,
+        databaseName,
+        status,
+        syncInterval,
+        remark,
       });
-    }
 
-    const database = await service.create({
-      notionDatabaseId,
-      tableName,
-      databaseName,
-      status,
-      syncInterval,
-      remark,
-    });
-
-    res.status(201).json({
-      success: true,
-      message: '创建成功',
-      data: database,
-    });
-  } catch (error) {
-    if ((error as Error).message.includes('已存在')) {
-      return res.status(409).json({
-        success: false,
-        message: (error as Error).message,
+      res.status(201).json({
+        success: true,
+        message: '创建成功',
+        data: database,
       });
+    } catch (error) {
+      if ((error as Error).message.includes('已存在')) {
+        return res.status(409).json({
+          success: false,
+          message: (error as Error).message,
+        });
+      }
+      return next(error);
     }
-    return next(error);
   }
-});
+);
 
 /**
  * PUT /api/sync/databases/:id
- * 更新同步数据库配置
+ * 更新同步数据库配置（需要认证）
  *
  * 请求体:
  * {
@@ -370,261 +394,276 @@ router.post('/databases', async (req: Request, res: Response, next: NextFunction
  *   remark?: string            // 备注
  * }
  */
-router.put('/databases/:id', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const service = getSyncDatabaseService();
-    await service.initialize();
+router.put(
+  '/databases/:id',
+  createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const service = getSyncDatabaseService();
+      await service.initialize();
 
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
-      return res.status(400).json({
-        success: false,
-        message: '无效的ID',
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) {
+        return res.status(400).json({
+          success: false,
+          message: '无效的ID',
+        });
+      }
+
+      const { tableName, databaseName, status, syncInterval, remark } = req.body;
+
+      const database = await service.update(id, {
+        tableName,
+        databaseName,
+        status,
+        syncInterval,
+        remark,
       });
-    }
 
-    const { tableName, databaseName, status, syncInterval, remark } = req.body;
+      if (!database) {
+        return res.status(404).json({
+          success: false,
+          message: '配置不存在',
+        });
+      }
 
-    const database = await service.update(id, {
-      tableName,
-      databaseName,
-      status,
-      syncInterval,
-      remark,
-    });
-
-    if (!database) {
-      return res.status(404).json({
-        success: false,
-        message: '配置不存在',
+      res.json({
+        success: true,
+        message: '更新成功',
+        data: database,
       });
+    } catch (error) {
+      if ((error as Error).message.includes('已存在')) {
+        return res.status(409).json({
+          success: false,
+          message: (error as Error).message,
+        });
+      }
+      return next(error);
     }
-
-    res.json({
-      success: true,
-      message: '更新成功',
-      data: database,
-    });
-  } catch (error) {
-    if ((error as Error).message.includes('已存在')) {
-      return res.status(409).json({
-        success: false,
-        message: (error as Error).message,
-      });
-    }
-    return next(error);
   }
-});
+);
 
 /**
  * DELETE /api/sync/databases/:id
- * 删除同步数据库配置
+ * 删除同步数据库配置（需要认证）
  */
-router.delete('/databases/:id', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const service = getSyncDatabaseService();
-    await service.initialize();
+router.delete(
+  '/databases/:id',
+  createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const service = getSyncDatabaseService();
+      await service.initialize();
 
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
-      return res.status(400).json({
-        success: false,
-        message: '无效的ID',
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) {
+        return res.status(400).json({
+          success: false,
+          message: '无效的ID',
+        });
+      }
+
+      const deleted = await service.delete(id);
+
+      if (!deleted) {
+        return res.status(404).json({
+          success: false,
+          message: '配置不存在',
+        });
+      }
+
+      res.json({
+        success: true,
+        message: '删除成功',
       });
+    } catch (error) {
+      return next(error);
     }
-
-    const deleted = await service.delete(id);
-
-    if (!deleted) {
-      return res.status(404).json({
-        success: false,
-        message: '配置不存在',
-      });
-    }
-
-    res.json({
-      success: true,
-      message: '删除成功',
-    });
-  } catch (error) {
-    return next(error);
   }
-});
+);
 
 /**
  * ============================================
- * 单数据库同步接口
+ * 单数据库同步接口（需要认证）
  * ============================================
  */
 
 /**
  * POST /api/sync/databases/:id/sync
- * 根据配置ID同步单个数据库
+ * 根据配置ID同步单个数据库（需要认证）
  */
-router.post('/databases/:id/sync', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const service = getSyncDatabaseService();
-    await service.initialize();
+router.post(
+  '/databases/:id/sync',
+  createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const service = getSyncDatabaseService();
+      await service.initialize();
 
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
-      return res.status(400).json({
-        success: false,
-        message: '无效的ID',
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) {
+        return res.status(400).json({
+          success: false,
+          message: '无效的ID',
+        });
+      }
+
+      // 获取数据库配置
+      const database = await service.findById(id);
+      if (!database) {
+        return res.status(404).json({
+          success: false,
+          message: '数据库配置不存在',
+        });
+      }
+
+      if (database.status !== 'active') {
+        return res.status(400).json({
+          success: false,
+          message: '数据库配置已禁用，请先启用后再同步',
+        });
+      }
+
+      // 创建同步引擎并执行同步
+      const engine = createSyncEngine({
+        notionConfig: getNotionConfig(),
+        mysqlConfig: getMySQLConfig(),
+        tableName: database.tableName,
+        debugMode: req.body?.debug === true,
       });
-    }
+      engine.setDatabaseId(database.notionDatabaseId);
 
-    // 获取数据库配置
-    const database = await service.findById(id);
-    if (!database) {
-      return res.status(404).json({
-        success: false,
-        message: '数据库配置不存在',
-      });
-    }
+      const result = await engine.syncDatabase(database.tableName);
 
-    if (database.status !== 'active') {
-      return res.status(400).json({
-        success: false,
-        message: '数据库配置已禁用，请先启用后再同步',
-      });
-    }
+      // 更新最后同步时间
+      if (result.success) {
+        await service.updateLastSyncAt(id);
+      }
 
-    // 创建同步引擎并执行同步
-    const engine = createSyncEngine({
-      notionConfig: getNotionConfig(),
-      mysqlConfig: getMySQLConfig(),
-      tableName: database.tableName,
-      debugMode: req.body?.debug === true,
-    });
-    engine.setDatabaseId(database.notionDatabaseId);
-
-    const result = await engine.syncDatabase(database.tableName);
-
-    // 更新最后同步时间
-    if (result.success) {
-      await service.updateLastSyncAt(id);
-    }
-
-    if (result.success) {
-      res.json({
-        success: true,
-        message: '同步成功',
-        data: {
-          databaseId: database.id,
-          notionDatabaseId: database.notionDatabaseId,
-          tableName: database.tableName,
-          result: {
-            totalRecords: result.totalRecords,
-            insertedRecords: result.insertedRecords,
-            updatedRecords: result.updatedRecords,
-            skippedRecords: result.skippedRecords,
-            duration: result.duration,
-            syncedAt: result.syncedAt.toISOString(),
+      if (result.success) {
+        res.json({
+          success: true,
+          message: '同步成功',
+          data: {
+            databaseId: database.id,
+            notionDatabaseId: database.notionDatabaseId,
+            tableName: database.tableName,
+            result: {
+              totalRecords: result.totalRecords,
+              insertedRecords: result.insertedRecords,
+              updatedRecords: result.updatedRecords,
+              skippedRecords: result.skippedRecords,
+              duration: result.duration,
+              syncedAt: result.syncedAt.toISOString(),
+            },
           },
-        },
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        message: '同步失败',
-        error: result.error,
-        data: {
-          databaseId: database.id,
-          notionDatabaseId: database.notionDatabaseId,
-          tableName: database.tableName,
-          result: {
-            totalRecords: result.totalRecords,
-            duration: result.duration,
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: '同步失败',
+          error: result.error,
+          data: {
+            databaseId: database.id,
+            notionDatabaseId: database.notionDatabaseId,
+            tableName: database.tableName,
+            result: {
+              totalRecords: result.totalRecords,
+              duration: result.duration,
+            },
           },
-        },
-      });
+        });
+      }
+    } catch (error) {
+      return next(error);
     }
-  } catch (error) {
-    return next(error);
   }
-});
+);
 
 /**
  * POST /api/sync/database/sync
- * 根据databaseId同步单个数据库
+ * 根据databaseId同步单个数据库（需要认证）
  *
  * 请求体:
  * {
  *   databaseId: string,  // Notion数据库ID (必填)
  *   tableName: string,   // MySQL表名 (必填)
  *   debug?: boolean      // 是否启用调试模式
- * }
  */
-router.post('/database/sync', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const { databaseId, tableName, debug } = req.body;
+router.post(
+  '/database/sync',
+  createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { databaseId, tableName, debug } = req.body;
 
-    // 参数验证
-    if (!databaseId || !tableName) {
-      return res.status(400).json({
-        success: false,
-        message: '缺少必填参数: databaseId, tableName',
+      // 参数验证
+      if (!databaseId || !tableName) {
+        return res.status(400).json({
+          success: false,
+          message: '缺少必填参数: databaseId, tableName',
+        });
+      }
+
+      // 创建同步引擎并执行同步
+      const engine = createSyncEngine({
+        notionConfig: getNotionConfig(),
+        mysqlConfig: getMySQLConfig(),
+        tableName,
+        debugMode: debug === true,
       });
-    }
+      engine.setDatabaseId(databaseId);
 
-    // 创建同步引擎并执行同步
-    const engine = createSyncEngine({
-      notionConfig: getNotionConfig(),
-      mysqlConfig: getMySQLConfig(),
-      tableName,
-      debugMode: debug === true,
-    });
-    engine.setDatabaseId(databaseId);
+      const result = await engine.syncDatabase(tableName);
 
-    const result = await engine.syncDatabase(tableName);
-
-    if (result.success) {
-      res.json({
-        success: true,
-        message: '同步成功',
-        data: {
-          notionDatabaseId: databaseId,
-          tableName,
-          result: {
-            totalRecords: result.totalRecords,
-            insertedRecords: result.insertedRecords,
-            updatedRecords: result.updatedRecords,
-            skippedRecords: result.skippedRecords,
-            duration: result.duration,
-            syncedAt: result.syncedAt.toISOString(),
+      if (result.success) {
+        res.json({
+          success: true,
+          message: '同步成功',
+          data: {
+            notionDatabaseId: databaseId,
+            tableName,
+            result: {
+              totalRecords: result.totalRecords,
+              insertedRecords: result.insertedRecords,
+              updatedRecords: result.updatedRecords,
+              skippedRecords: result.skippedRecords,
+              duration: result.duration,
+              syncedAt: result.syncedAt.toISOString(),
+            },
           },
-        },
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        message: '同步失败',
-        error: result.error,
-        data: {
-          notionDatabaseId: databaseId,
-          tableName,
-          result: {
-            totalRecords: result.totalRecords,
-            duration: result.duration,
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: '同步失败',
+          error: result.error,
+          data: {
+            notionDatabaseId: databaseId,
+            tableName,
+            result: {
+              totalRecords: result.totalRecords,
+              duration: result.duration,
+            },
           },
-        },
-      });
+        });
+      }
+    } catch (error) {
+      return next(error);
     }
-  } catch (error) {
-    return next(error);
   }
-});
+);
 
 /**
  * ============================================
- * 查询已配置表数据接口
+ * 查询已配置表数据接口（需要认证）
  * ============================================
  */
 
 /**
  * GET /api/sync/table/:tableName
- * 查询已配置表的数据列表
+ * 查询已配置表的数据列表（需要认证）
  *
  * 路径参数:
  * - tableName: 表名
@@ -635,107 +674,119 @@ router.post('/database/sync', async (req: Request, res: Response, next: NextFunc
  * - orderBy: 排序字段 (默认 created_time)
  * - orderDir: 排序方向 ASC/DESC (默认 DESC)
  */
-router.get('/table/:tableName', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const service = getSyncDatabaseService();
-    await service.initialize();
+router.get(
+  '/table/:tableName',
+  createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const service = getSyncDatabaseService();
+      await service.initialize();
 
-    const { tableName } = req.params;
-    const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
-    const pageSize = req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : undefined;
-    const orderBy = req.query.orderBy as string | undefined;
-    const orderDir = (req.query.orderDir as 'ASC' | 'DESC' | undefined) || 'DESC';
+      const { tableName } = req.params;
+      const page = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
+      const pageSize = req.query.pageSize ? parseInt(req.query.pageSize as string, 10) : undefined;
+      const orderBy = req.query.orderBy as string | undefined;
+      const orderDir = (req.query.orderDir as 'ASC' | 'DESC' | undefined) || 'DESC';
 
-    const result = await service.queryTableData({
-      tableName,
-      page,
-      pageSize,
-      orderBy,
-      orderDir,
-    });
-
-    res.json({
-      success: true,
-      message: '查询成功',
-      data: result,
-    });
-  } catch (error) {
-    if ((error as Error).message.includes('未在 sync_databases 中配置') || (error as Error).message.includes('已禁用')) {
-      return res.status(403).json({
-        success: false,
-        message: (error as Error).message,
+      const result = await service.queryTableData({
+        tableName,
+        page,
+        pageSize,
+        orderBy,
+        orderDir,
       });
+
+      res.json({
+        success: true,
+        message: '查询成功',
+        data: result,
+      });
+    } catch (error) {
+      if ((error as Error).message.includes('未在 sync_databases 中配置') || (error as Error).message.includes('已禁用')) {
+        return res.status(403).json({
+          success: false,
+          message: (error as Error).message,
+        });
+      }
+      return next(error);
     }
-    return next(error);
   }
-});
+);
 
 /**
  * GET /api/sync/table/:tableName/count
- * 查询已配置表的记录数
+ * 查询已配置表的记录数（需要认证）
  */
-router.get('/table/:tableName/count', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const service = getSyncDatabaseService();
-    await service.initialize();
+router.get(
+  '/table/:tableName/count',
+  createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const service = getSyncDatabaseService();
+      await service.initialize();
 
-    const { tableName } = req.params;
+      const { tableName } = req.params;
 
-    const count = await service.getTableCount(tableName);
+      const count = await service.getTableCount(tableName);
 
-    res.json({
-      success: true,
-      message: '查询成功',
-      data: {
-        tableName,
-        count,
-      },
-    });
-  } catch (error) {
-    if ((error as Error).message.includes('未在 sync_databases 中配置') || (error as Error).message.includes('已禁用')) {
-      return res.status(403).json({
-        success: false,
-        message: (error as Error).message,
+      res.json({
+        success: true,
+        message: '查询成功',
+        data: {
+          tableName,
+          count,
+        },
       });
+    } catch (error) {
+      if ((error as Error).message.includes('未在 sync_databases 中配置') || (error as Error).message.includes('已禁用')) {
+        return res.status(403).json({
+          success: false,
+          message: (error as Error).message,
+        });
+      }
+      return next(error);
     }
-    return next(error);
   }
-});
+);
 
 /**
  * GET /api/sync/table/:tableName/:id
- * 查询已配置表的单条记录
+ * 查询已配置表的单条记录（需要认证）
  */
-router.get('/table/:tableName/:id', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const service = getSyncDatabaseService();
-    await service.initialize();
+router.get(
+  '/table/:tableName/:id',
+  createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const service = getSyncDatabaseService();
+      await service.initialize();
 
-    const { tableName, id } = req.params;
+      const { tableName, id } = req.params;
 
-    const record = await service.findRecordById(tableName, id);
+      const record = await service.findRecordById(tableName, id);
 
-    if (!record) {
-      return res.status(404).json({
-        success: false,
-        message: '记录不存在',
+      if (!record) {
+        return res.status(404).json({
+          success: false,
+          message: '记录不存在',
+        });
+      }
+
+      res.json({
+        success: true,
+        message: '查询成功',
+        data: record,
       });
+    } catch (error) {
+      if ((error as Error).message.includes('未在 sync_databases 中配置') || (error as Error).message.includes('已禁用')) {
+        return res.status(403).json({
+          success: false,
+          message: (error as Error).message,
+        });
+      }
+      return next(error);
     }
-
-    res.json({
-      success: true,
-      message: '查询成功',
-      data: record,
-    });
-  } catch (error) {
-    if ((error as Error).message.includes('未在 sync_databases 中配置') || (error as Error).message.includes('已禁用')) {
-      return res.status(403).json({
-        success: false,
-        message: (error as Error).message,
-      });
-    }
-    return next(error);
   }
-});
+);
 
 export default router;
