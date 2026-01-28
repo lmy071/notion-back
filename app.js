@@ -4,13 +4,9 @@ var path = require('path');
 var cookieParser = require('cookie-parser');
 var logger = require('morgan');
 
-// TypeScript 路由编译后加载
 var indexRouter = require('./routes/index');
-var userRouter = require('./dist/routes/user').default;
-var syncRouter = require('./dist/routes/sync').default;
-
-// 导入 API 日志中间件
-var apilogger = require('./dist/apilogger').default;
+var usersRouter = require('./routes/users');
+var apiRouter = require('./routes/api');
 
 var app = express();
 
@@ -24,26 +20,9 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 应用 API 日志中间件（在路由之前）
-// 自动记录所有 /api 开头的接口调用
-app.use(apilogger);
-
 app.use('/', indexRouter);
-
-// 用户API路由
-app.use('/api/user', userRouter);
-
-// 同步API路由
-app.use('/api/sync', syncRouter);
-
-// 健康检查接口
-app.get('/api/health', function(req, res) {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    service: 'notion-sync',
-  });
-});
+app.use('/users', usersRouter);
+app.use('/api', apiRouter);
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {

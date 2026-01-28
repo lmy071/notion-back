@@ -1,35 +1,21 @@
 {
-  "name": "notion-node",
+  "name": "notion-sync",
   "version": "0.0.0",
   "private": true,
-  "description": "Notion数据同步到MySQL工具",
-  "main": "dist/notion2mysql.js",
   "scripts": {
-    "build": "NODE_ENV=production tsc",
-    "start": "NODE_ENV=production node ./bin/www",
-    "sync": "NODE_ENV=production node dist/notion2mysql.js",
-    "sync:dev": "NODE_ENV=development ts-node src/notion2mysql.ts",
-    "dev": "NODE_ENV=development node ./bin/www"
+    "start": "cross-env NODE_ENV=development node ./bin/www",
+    "build": "cross-env NODE_ENV=production node ./bin/www"
   },
   "dependencies": {
-    "@notionhq/client": "^2.2.14",
+    "axios": "^1.13.4",
     "cookie-parser": "~1.4.4",
+    "cross-env": "^10.1.0",
     "debug": "~2.6.9",
-    "dotenv": "^16.3.1",
+    "dotenv": "^17.2.3",
     "express": "~4.16.1",
     "http-errors": "~1.6.3",
     "morgan": "~1.9.1",
-    "mysql2": "^3.6.5",
-    "pug": "2.0.0-beta11",
-    "uuid": "^9.0.1"
-  },
-  "devDependencies": {
-    "@types/cookie-parser": "^1.4.6",
-    "@types/dotenv": "^8.2.0",
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.10.4",
-    "@types/uuid": "^9.0.7",
-    "typescript": "^5.3.3",
-    "ts-node": "^10.9.2"
+    "mysql2": "^3.16.2",
+    "pug": "2.0.0-beta11"
   }
 }
