@@ -87,8 +87,18 @@ export class NotionClient {
   private client: Client;
   /** 配置对象 */
   private config: INotionConfig;
-  /** 数据库ID（动态设置） */
-  private _databaseId: string;
+  /**
+   * 外部传入的 ID（当前接口字段名为 dataSourceId）
+   * 可能是：
+   * - data_source_id（新版）
+   * - database_id（你现在传的就是这个）
+   *
+   * 在调用新版 data_sources API 前，会自动解析成真正的 data_source_id
+   */
+  private _dataSourceId: string;
+
+  /** 解析后的 data_source_id（缓存） */
+  private _resolvedDataSourceId?: string;
 
   /**
    * 创建Notion客户端
@@ -105,8 +115,9 @@ export class NotionClient {
       );
     }
 
-    // 初始化数据库ID（设置为空，后续通过setDatabaseId设置）
-    this._databaseId = '';
+    // 初始化 data_source_id（设置为空，后续通过 setDataSourceId 设置）
+    this._dataSourceId = '';
+    this._resolvedDataSourceId = undefined;
 
     // 初始化Notion客户端
     this.client = new Client({
@@ -116,15 +127,78 @@ export class NotionClient {
   }
 
   /**
-   * 设置数据库ID
-   * @param databaseId - Notion数据库ID
+   * 设置 Data source ID（新接口）
+   * @param dataSourceId - Notion data_source_id
    */
-  setDatabaseId(databaseId: string): void {
-    this._databaseId = databaseId;
+  setDataSourceId(dataSourceId: string): void {
+    this._dataSourceId = dataSourceId;
+    this._resolvedDataSourceId = undefined;
   }
 
   /**
-   * 获取数据库中的所有记录
+   * 解析为真正的 data_source_id
+   * - 若传入就是 data_source_id：直接返回
+   * - 若传入是 database_id：GET /v1/databases/{database_id}，从 data_sources 数组取第一个 data_source_id
+   */
+  private async resolveDataSourceId(): Promise<string> {
+    if (this._resolvedDataSourceId) {
+      return this._resolvedDataSourceId;
+    }
+
+    if (!this._dataSourceId) {
+      throw new NotionConfigError('未设置 dataSourceId');
+    }
+
+    const input = this._dataSourceId;
+
+    // 1) 先尝试当作 data_source_id
+    try {
+      await this.client.request({
+        method: 'get',
+        path: `data_sources/${input}`,
+      });
+      this._resolvedDataSourceId = input;
+      return input;
+    } catch (error) {
+      // 忽略，继续走 database_id -> data_source_id 的解析
+    }
+
+    // 2) 当作 database_id，取 data_sources 列表
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const database: any = await this.client.request({
+      method: 'get',
+      path: `databases/${input}`,
+    });
+
+    const dataSources = database?.data_sources;
+    if (!Array.isArray(dataSources) || dataSources.length === 0) {
+      throw new NotionAPIError(
+        '无法从 /v1/databases/{database_id} 响应中解析 data_sources（请确认 Notion-Version=2025-09-03 且该数据库包含数据源）',
+        'DATA_SOURCE_RESOLVE_ERROR'
+      );
+    }
+
+    const first = dataSources[0];
+    const resolved =
+      typeof first === 'string'
+        ? first
+        : typeof first?.id === 'string'
+          ? first.id
+          : undefined;
+
+    if (!resolved) {
+      throw new NotionAPIError(
+        'data_sources[0] 缺少 id，无法解析 data_source_id',
+        'DATA_SOURCE_RESOLVE_ERROR'
+      );
+    }
+
+    this._resolvedDataSourceId = resolved;
+    return resolved;
+  }
+
+  /**
+   * 获取数据源中的所有记录（分页拉取）
    * @returns Promise<INotionPage[]> - Notion页面数组
    * @throws NotionAPIError - API调用失败时抛出
    *
@@ -140,13 +214,18 @@ export class NotionClient {
       const allPages: INotionPage[] = [];
       let cursor: string | undefined = undefined;
 
+      const dataSourceId = await this.resolveDataSourceId();
+
       do {
-        // 使用 any 类型避免与 Notion API 返回类型不匹配的问题
+        // Notion 2025-09-03：使用 data_sources/{id}/query
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const response: any = await this.client.databases.query({
-          database_id: this._databaseId,
-          start_cursor: cursor,
-          page_size: 100, // 每次最多获取100条
+        const response: any = await this.client.request({
+          method: 'post',
+          path: `data_sources/${dataSourceId}/query`,
+          body: {
+            start_cursor: cursor,
+            page_size: 100, // 每次最多获取100条
+          },
         });
 
         allPages.push(...response.results);
@@ -163,37 +242,41 @@ export class NotionClient {
       if (error instanceof Error) {
         const notionError = error as { code?: string; body?: unknown };
         throw new NotionAPIError(
-          `获取Notion数据失败: ${error.message}`,
+          `获取Notion数据失败（data_source）: ${error.message}`,
           notionError.code || 'UNKNOWN_ERROR',
           undefined,
           undefined
         );
       }
-      throw new NotionAPIError('获取Notion数据失败: 未知错误', 'UNKNOWN_ERROR');
+      throw new NotionAPIError('获取Notion数据失败（data_source）: 未知错误', 'UNKNOWN_ERROR');
     }
   }
 
   /**
-   * 获取数据库Schema信息
+   * 获取 Data source Schema 信息
    * @returns Promise<Record<string, NotionProperty>> - 属性映射
    * @throws NotionAPIError - API调用失败时抛出
    */
   async getDatabaseSchema(): Promise<Record<string, NotionProperty>> {
     try {
-      const database = await this.client.databases.retrieve({
-        database_id: this._databaseId,
+      const dataSourceId = await this.resolveDataSourceId();
+      // Notion 2025-09-03：GET /v1/data_sources/{id}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dataSource: any = await this.client.request({
+        method: 'get',
+        path: `data_sources/${dataSourceId}`,
       });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (database as any).properties as Record<string, NotionProperty>;
+      return (dataSource as any).properties as Record<string, NotionProperty>;
     } catch (error) {
       if (error instanceof Error) {
         throw new NotionAPIError(
-          `获取数据库Schema失败: ${error.message}`,
+          `获取数据源Schema失败: ${error.message}`,
           'SCHEMA_FETCH_ERROR'
         );
       }
-      throw new NotionAPIError('获取数据库Schema失败: 未知错误', 'SCHEMA_FETCH_ERROR');
+      throw new NotionAPIError('获取数据源Schema失败: 未知错误', 'SCHEMA_FETCH_ERROR');
     }
   }
 
@@ -407,11 +490,11 @@ export class NotionClient {
   }
 
   /**
-   * 获取数据库ID
-   * @returns string - 数据库ID
+   * 获取 Data source ID
+   * @returns string - data_source_id
    */
-  getDatabaseId(): string {
-    return this._databaseId;
+  getDataSourceId(): string {
+    return this._dataSourceId;
   }
 
   /**

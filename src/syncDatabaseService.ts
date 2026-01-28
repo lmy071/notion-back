@@ -1,17 +1,17 @@
 /**
  * 同步数据库配置服务模块
  * @module syncDatabaseService
- * @description 提供 sync_databases 表的增删改查操作
+ * @description 提供 sync_data_sources 表的增删改查操作（Notion Data Sources 版）
  */
 
 import { RowDataPacket } from 'mysql2/promise';
 import { MySQLClient, MySQLQueryError } from './mysqlClient';
 import {
-  ISyncDatabase,
-  ICreateSyncDatabaseRequest,
-  IUpdateSyncDatabaseRequest,
-  ISyncDatabaseListQuery,
-  SyncDatabaseStatus,
+  ISyncDataSource,
+  ICreateSyncDataSourceRequest,
+  IUpdateSyncDataSourceRequest,
+  ISyncDataSourceListQuery,
+  SyncDataSourceStatus,
 } from './types';
 
 /**
@@ -62,7 +62,7 @@ export class SyncDatabaseService {
   /** MySQL客户端 */
   private mysqlClient: MySQLClient;
   /** 表名 */
-  private readonly tableName = 'sync_databases';
+  private readonly tableName = 'sync_data_sources';
 
   /**
    * 创建同步数据库配置服务
@@ -91,13 +91,13 @@ export class SyncDatabaseService {
    * @param row - 数据库行
    * @returns ISyncDatabase对象
    */
-  private rowToSyncDatabase(row: RowDataPacket): ISyncDatabase {
+  private rowToSyncDatabase(row: RowDataPacket): ISyncDataSource {
     return {
       id: row.id,
-      notionDatabaseId: row.notion_database_id,
+      notionDataSourceId: row.notion_data_source_id,
       tableName: row.table_name,
       databaseName: row.database_name,
-      status: row.status as SyncDatabaseStatus,
+      status: row.status as SyncDataSourceStatus,
       syncInterval: row.sync_interval,
       lastSyncAt: row.last_sync_at ? new Date(row.last_sync_at) : null,
       createdAt: new Date(row.created_at),
@@ -109,19 +109,19 @@ export class SyncDatabaseService {
   /**
    * 创建同步数据库配置
    * @param data - 创建请求数据
-   * @returns Promise<ISyncDatabase> - 创建的配置
+   * @returns Promise<ISyncDataSource> - 创建的配置
    * @throws MySQLQueryError - 创建失败时抛出
    */
-  async create(data: ICreateSyncDatabaseRequest): Promise<ISyncDatabase> {
+  async create(data: ICreateSyncDataSourceRequest): Promise<ISyncDataSource> {
     const pool = (this.mysqlClient as unknown as { getPool: () => { query: (sql: string, params: unknown[]) => Promise<[ResultSetHeader, unknown[]]> } }).getPool();
     const sql = `
       INSERT INTO \`${this.tableName}\`
-        (notion_database_id, table_name, database_name, status, sync_interval, remark)
+        (notion_data_source_id, table_name, database_name, status, sync_interval, remark)
       VALUES (?, ?, ?, ?, ?, ?)
     `;
 
     const params = [
-      data.notionDatabaseId,
+      data.notionDataSourceId,
       data.tableName,
       data.databaseName,
       data.status || 'active',
@@ -142,7 +142,7 @@ export class SyncDatabaseService {
       }
       const mysqlError = error as { code?: string };
       if (mysqlError.code === 'ER_DUP_ENTRY') {
-        throw new Error('Notion数据库ID或表名已存在');
+        throw new Error('Notion数据源ID或表名已存在');
       }
       throw new MySQLQueryError(`创建同步数据库配置失败: ${(error as Error).message}`, sql);
     }
@@ -151,9 +151,9 @@ export class SyncDatabaseService {
   /**
    * 根据ID查询配置
    * @param id - 配置ID
-   * @returns Promise<ISyncDatabase | null> - 配置对象，不存在返回null
+   * @returns Promise<ISyncDataSource | null> - 配置对象，不存在返回null
    */
-  async findById(id: number): Promise<ISyncDatabase | null> {
+  async findById(id: number): Promise<ISyncDataSource | null> {
     const pool = (this.mysqlClient as unknown as { getPool: () => { query: (sql: string, params: unknown[]) => Promise<[RowDataPacket[], unknown[]]> } }).getPool();
     const sql = `SELECT * FROM \`${this.tableName}\` WHERE \`id\` = ?`;
 
@@ -169,16 +169,16 @@ export class SyncDatabaseService {
   }
 
   /**
-   * 根据Notion数据库ID查询配置
-   * @param notionDatabaseId - Notion数据库ID
-   * @returns Promise<ISyncDatabase | null> - 配置对象，不存在返回null
+   * 根据 Notion data_source_id 查询配置
+   * @param notionDataSourceId - Notion data_source_id
+   * @returns Promise<ISyncDataSource | null> - 配置对象，不存在返回null
    */
-  async findByNotionDatabaseId(notionDatabaseId: string): Promise<ISyncDatabase | null> {
+  async findByNotionDataSourceId(notionDataSourceId: string): Promise<ISyncDataSource | null> {
     const pool = (this.mysqlClient as unknown as { getPool: () => { query: (sql: string, params: unknown[]) => Promise<[RowDataPacket[], unknown[]]> } }).getPool();
-    const sql = `SELECT * FROM \`${this.tableName}\` WHERE \`notion_database_id\` = ?`;
+    const sql = `SELECT * FROM \`${this.tableName}\` WHERE \`notion_data_source_id\` = ?`;
 
     try {
-      const [rows] = await pool.query(sql, [notionDatabaseId]);
+      const [rows] = await pool.query(sql, [notionDataSourceId]);
       if (rows.length === 0) {
         return null;
       }
@@ -191,9 +191,9 @@ export class SyncDatabaseService {
   /**
    * 根据表名查询配置
    * @param tableName - MySQL表名
-   * @returns Promise<ISyncDatabase | null> - 配置对象，不存在返回null
+   * @returns Promise<ISyncDataSource | null> - 配置对象，不存在返回null
    */
-  async findByTableName(tableName: string): Promise<ISyncDatabase | null> {
+  async findByTableName(tableName: string): Promise<ISyncDataSource | null> {
     const pool = (this.mysqlClient as unknown as { getPool: () => { query: (sql: string, params: unknown[]) => Promise<[RowDataPacket[], unknown[]]> } }).getPool();
     const sql = `SELECT * FROM \`${this.tableName}\` WHERE \`table_name\` = ?`;
 
@@ -211,9 +211,9 @@ export class SyncDatabaseService {
   /**
    * 获取所有同步数据库配置
    * @param query - 查询参数
-   * @returns Promise<{ list: ISyncDatabase[]; total: number }> - 配置列表和总数
+   * @returns Promise<{ list: ISyncDataSource[]; total: number }> - 配置列表和总数
    */
-  async findAll(query?: ISyncDatabaseListQuery): Promise<{ list: ISyncDatabase[]; total: number }> {
+  async findAll(query?: ISyncDataSourceListQuery): Promise<{ list: ISyncDataSource[]; total: number }> {
     const pool = (this.mysqlClient as unknown as { getPool: () => { query: (sql: string, params: unknown[]) => Promise<[RowDataPacket[], unknown[]]> } }).getPool();
     const page = query?.page || 1;
     const pageSize = query?.pageSize || 20;
@@ -261,9 +261,9 @@ export class SyncDatabaseService {
    * 更新同步数据库配置
    * @param id - 配置ID
    * @param data - 更新数据
-   * @returns Promise<ISyncDatabase | null> - 更新后的配置，不存在返回null
+   * @returns Promise<ISyncDataSource | null> - 更新后的配置，不存在返回null
    */
-  async update(id: number, data: IUpdateSyncDatabaseRequest): Promise<ISyncDatabase | null> {
+  async update(id: number, data: IUpdateSyncDataSourceRequest): Promise<ISyncDataSource | null> {
     const pool = (this.mysqlClient as unknown as { getPool: () => { query: (sql: string, params: unknown[]) => Promise<[ResultSetHeader, unknown[]]> } }).getPool();
 
     // 构建更新字段
@@ -336,9 +336,9 @@ export class SyncDatabaseService {
 
   /**
    * 获取所有启用的同步数据库配置
-   * @returns Promise<ISyncDatabase[]> - 启用的配置列表
+   * @returns Promise<ISyncDataSource[]> - 启用的配置列表
    */
-  async findActive(): Promise<ISyncDatabase[]> {
+  async findActive(): Promise<ISyncDataSource[]> {
     const pool = (this.mysqlClient as unknown as { getPool: () => { query: (sql: string, params?: unknown[]) => Promise<[RowDataPacket[], unknown[]]> } }).getPool();
     const sql = `
       SELECT * FROM \`${this.tableName}\`
@@ -372,13 +372,13 @@ export class SyncDatabaseService {
   }
 
   /**
-   * 检查表是否在 sync_databases 中已配置
+   * 检查表是否在 sync_data_sources 中已配置
    * @param tableName - 表名
-   * @returns Promise<{ valid: boolean; config: ISyncDatabase | null; message: string }> - 验证结果和配置
+   * @returns Promise<{ valid: boolean; config: ISyncDataSource | null; message: string }> - 验证结果和配置
    */
   async validateTable(tableName: string): Promise<{
     valid: boolean;
-    config: ISyncDatabase | null;
+    config: ISyncDataSource | null;
     message: string;
   }> {
     const config = await this.findByTableName(tableName);
@@ -387,7 +387,7 @@ export class SyncDatabaseService {
       return {
         valid: false,
         config: null,
-        message: `表 '${tableName}' 未在 sync_databases 中配置`,
+        message: `表 '${tableName}' 未在 sync_data_sources 中配置`,
       };
     }
 
@@ -415,7 +415,7 @@ export class SyncDatabaseService {
   async queryTableData(params: IQueryTableDataParams): Promise<IQueryTableDataResult> {
     const { tableName, page, pageSize, orderBy, orderDir } = params;
 
-    // 验证表是否在 sync_databases 中配置
+    // 验证表是否在 sync_data_sources 中配置
     const validation = await this.validateTable(tableName);
     if (!validation.valid) {
       throw new Error(validation.message);
@@ -445,7 +445,7 @@ export class SyncDatabaseService {
    * @returns Promise<RowDataPacket | null> - 记录数据
    */
   async findRecordById(tableName: string, id: string): Promise<RowDataPacket | null> {
-    // 验证表是否在 sync_databases 中配置
+    // 验证表是否在 sync_data_sources 中配置
     const validation = await this.validateTable(tableName);
     if (!validation.valid) {
       throw new Error(validation.message);
@@ -460,7 +460,7 @@ export class SyncDatabaseService {
    * @returns Promise<number> - 记录数
    */
   async getTableCount(tableName: string): Promise<number> {
-    // 验证表是否在 sync_databases 中配置
+    // 验证表是否在 sync_data_sources 中配置
     const validation = await this.validateTable(tableName);
     if (!validation.valid) {
       throw new Error(validation.message);

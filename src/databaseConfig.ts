@@ -1,17 +1,17 @@
 /**
  * 数据库配置管理模块
  * @module databaseConfig
- * @description 管理多个Notion数据库的同步配置
+ * @description 管理多个Notion data source 的同步配置（本地 JSON 配置，主要用于开发/测试）
  */
 
 /**
  * Notion数据库配置接口
  */
-export interface IDatabaseConfig {
-  /** 数据库ID（主键） */
+export interface IDataSourceConfig {
+  /** 配置ID（主键） */
   id: number;
-  /** Notion数据库ID */
-  notionDatabaseId: string;
+  /** Notion data_source_id */
+  dataSourceId: string;
   /** MySQL表名 */
   tableName: string;
   /** 数据库名称 */
@@ -37,13 +37,13 @@ export class DatabaseConfigManager {
   /** 配置文件路径 */
   private configPath: string;
   /** 数据库配置列表 */
-  private databases: IDatabaseConfig[];
+  private databases: IDataSourceConfig[];
 
   /**
-   * 创建数据库配置管理器
-   * @param configPath - 配置文件路径（默认: ./config/databases.json）
+   * 创建配置管理器
+   * @param configPath - 配置文件路径（默认: ./config/data-sources.json）
    */
-  constructor(configPath: string = './config/databases.json') {
+  constructor(configPath: string = './config/data-sources.json') {
     this.configPath = configPath;
     this.databases = [];
     this.loadConfig();
@@ -96,7 +96,7 @@ export class DatabaseConfigManager {
    * 获取所有启用的数据库配置
    * @returns 数据库配置数组
    */
-  getActiveDatabases(): IDatabaseConfig[] {
+  getActiveDatabases(): IDataSourceConfig[] {
     return this.databases.filter((db) => db.status === 'active');
   }
 
@@ -104,7 +104,7 @@ export class DatabaseConfigManager {
    * 获取所有数据库配置
    * @returns 数据库配置数组
    */
-  getAllDatabases(): IDatabaseConfig[] {
+  getAllDatabases(): IDataSourceConfig[] {
     return this.databases;
   }
 
@@ -113,17 +113,17 @@ export class DatabaseConfigManager {
    * @param tableName - 表名
    * @returns 数据库配置或undefined
    */
-  getByTableName(tableName: string): IDatabaseConfig | undefined {
+  getByTableName(tableName: string): IDataSourceConfig | undefined {
     return this.databases.find((db) => db.tableName === tableName);
   }
 
   /**
-   * 根据Notion数据库ID获取配置
-   * @param notionDatabaseId - Notion数据库ID
+   * 根据 Notion data_source_id 获取配置
+   * @param dataSourceId - Notion data_source_id
    * @returns 数据库配置或undefined
    */
-  getByNotionId(notionDatabaseId: string): IDatabaseConfig | undefined {
-    return this.databases.find((db) => db.notionDatabaseId === notionDatabaseId);
+  getByDataSourceId(dataSourceId: string): IDataSourceConfig | undefined {
+    return this.databases.find((db) => db.dataSourceId === dataSourceId);
   }
 
   /**
@@ -132,10 +132,10 @@ export class DatabaseConfigManager {
    * @returns 添加后的配置
    */
   addDatabase(
-    config: Omit<IDatabaseConfig, 'id' | 'createdAt' | 'updatedAt'>
-  ): IDatabaseConfig {
+    config: Omit<IDataSourceConfig, 'id' | 'createdAt' | 'updatedAt'>
+  ): IDataSourceConfig {
     const now = new Date().toISOString();
-    const newConfig: IDatabaseConfig = {
+    const newConfig: IDataSourceConfig = {
       ...config,
       id: this.databases.length + 1,
       createdAt: now,
@@ -155,7 +155,7 @@ export class DatabaseConfigManager {
    */
   updateDatabase(
     id: number,
-    updates: Partial<Omit<IDatabaseConfig, 'id' | 'createdAt'>>
+    updates: Partial<Omit<IDataSourceConfig, 'id' | 'createdAt'>>
   ): boolean {
     const index = this.databases.findIndex((db) => db.id === id);
     if (index === -1) {
@@ -203,21 +203,21 @@ export class DatabaseConfigManager {
   /**
    * 添加示例配置（用于初始化）
    */
-  addSampleConfig(): IDatabaseConfig[] {
+  addSampleConfig(): IDataSourceConfig[] {
     // 检查是否已存在示例配置
-    const existing = this.getByNotionId('29320a967459807899b9f7b70478b3f6');
+    const existing = this.getByDataSourceId('your-data-source-id');
     if (existing) {
       return [existing];
     }
 
     const config = this.addDatabase({
-      notionDatabaseId: '29320a967459807899b9f7b70478b3f6',
+      dataSourceId: 'your-data-source-id',
       tableName: 'notion_sync',
       databaseName: 'notion_sync',
       status: 'active',
       syncInterval: 300,
       lastSyncAt: null,
-      remark: '示例数据库',
+      remark: '示例数据源',
     });
 
     return [config];

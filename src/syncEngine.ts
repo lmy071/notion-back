@@ -121,7 +121,7 @@ export class SyncEngine {
       console.log(`✅ 获取到 ${pages.length} 条记录`);
 
       // 保存同步日志
-      this.logger.saveLog(this.notionClient.getDatabaseId(), pages, true);
+      this.logger.saveLog(this.notionClient.getDataSourceId(), pages, true);
 
       if (pages.length === 0) {
         console.log('⚠️  Notion数据库中没有数据');
@@ -170,7 +170,7 @@ export class SyncEngine {
 
       // 保存失败的日志
       this.logger.saveLog(
-        this.notionClient.getDatabaseId(),
+        this.notionClient.getDataSourceId(),
         [],
         false,
         result.error
@@ -454,23 +454,23 @@ export class SyncEngine {
   }
 
   /**
-   * 设置Notion数据库ID
-   * @param databaseId - Notion数据库ID
+   * 设置 Notion data_source_id
+   * @param dataSourceId - Notion data_source_id
    */
-  setDatabaseId(databaseId: string): void {
-    this.notionClient.setDatabaseId(databaseId);
+  setDataSourceId(dataSourceId: string): void {
+    this.notionClient.setDataSourceId(dataSourceId);
   }
 
   /**
-   * 同步单个数据库（使用已设置的databaseId）
+   * 同步单个数据源（使用已设置的 dataSourceId）
    * @param tableName - MySQL表名
    * @returns Promise<ISyncResult> - 同步结果
    */
   async syncDatabase(tableName: string): Promise<ISyncResult> {
-    // 使用已设置的databaseId
-    const databaseId = this.notionClient.getDatabaseId();
-    if (!databaseId) {
-      throw new Error('请先调用setDatabaseId设置Notion数据库ID');
+    // 使用已设置的 dataSourceId
+    const dataSourceId = this.notionClient.getDataSourceId();
+    if (!dataSourceId) {
+      throw new Error('请先调用 setDataSourceId 设置 Notion data_source_id');
     }
 
     const startTime = Date.now();
@@ -486,7 +486,7 @@ export class SyncEngine {
 
     try {
       console.log('');
-      console.log(`🚀 开始同步数据库: ${databaseId} -> 表: ${tableName}`);
+      console.log(`🚀 开始同步数据源: ${dataSourceId} -> 表: ${tableName}`);
 
       // 1. 初始化MySQL连接
       await this.mysqlClient.initialize();
@@ -494,7 +494,7 @@ export class SyncEngine {
       // 2. 创建新的Notion客户端（使用指定的数据库ID）
       const notionConfig = this.notionClient.getConfig();
       const notionClient = new NotionClient(notionConfig);
-      notionClient.setDatabaseId(databaseId);
+      notionClient.setDataSourceId(dataSourceId);
 
       // 3. 获取Notion数据
       console.log('📥 正在从Notion获取数据...');
@@ -503,7 +503,7 @@ export class SyncEngine {
       console.log(`✅ 获取到 ${pages.length} 条记录`);
 
       // 保存同步日志
-      this.logger.saveLog(databaseId, pages, true);
+      this.logger.saveLog(dataSourceId, pages, true);
 
       if (pages.length === 0) {
         console.log('⚠️  Notion数据库中没有数据');
@@ -551,7 +551,7 @@ export class SyncEngine {
       result.duration = Date.now() - startTime;
 
       // 保存失败的日志
-      this.logger.saveLog(databaseId, [], false, result.error);
+      this.logger.saveLog(dataSourceId, [], false, result.error);
 
       console.error('❌ 同步失败！');
       console.error(`   错误信息: ${result.error}`);
@@ -570,7 +570,7 @@ export class SyncEngine {
    * @returns Promise<ISyncResult[]> - 所有同步结果
    */
   async syncAllDatabases(
-    databaseConfigs: Array<{ databaseId: string; tableName: string }>
+    databaseConfigs: Array<{ dataSourceId: string; tableName: string }>
   ): Promise<ISyncResult[]> {
     console.log('');
     console.log('═══════════════════════════════════════════════════════════');
@@ -588,7 +588,7 @@ export class SyncEngine {
       console.log(`═══════════════════════════════════════════════════════════`);
 
       // 先设置数据库ID，再同步
-      this.setDatabaseId(config.databaseId);
+      this.setDataSourceId(config.dataSourceId);
       const result = await this.syncDatabase(config.tableName);
       results.push(result);
     }

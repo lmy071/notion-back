@@ -8,7 +8,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { createSyncEngine, SyncEngine } from '../syncEngine';
 import { getNotionConfig } from '../setting';
 import { getMySQLConfig } from '../mysql';
-import { ISyncResult, ISyncDatabase } from '../types';
+import { ISyncResult, ISyncDataSource } from '../types';
 import { SyncDatabaseService, createSyncDatabaseService } from '../syncDatabaseService';
 import { createAuthMiddleware } from '../authMiddleware';
 import { createUserService } from '../userService';
@@ -89,15 +89,15 @@ router.get('/', (req: Request, res: Response) => {
       'POST /api/sync': '触发同步',
       'POST /api/sync/refresh': '刷新配置并同步',
       'GET /api/sync/status': '获取最近同步状态',
-      // sync_databases CRUD 接口
-      'GET /api/sync/databases': '获取同步数据库配置列表',
-      'GET /api/sync/databases/:id': '获取同步数据库配置详情',
-      'POST /api/sync/databases': '创建同步数据库配置',
-      'PUT /api/sync/databases/:id': '更新同步数据库配置',
-      'DELETE /api/sync/databases/:id': '删除同步数据库配置',
-      // 单数据库同步接口
-      'POST /api/sync/databases/:id/sync': '同步单个数据库',
-      'POST /api/sync/database/sync': '根据databaseId同步单个数据库',
+      // sync_data_sources CRUD 接口
+      'GET /api/sync/data-sources': '获取同步数据源配置列表',
+      'GET /api/sync/data-sources/:id': '获取同步数据源配置详情',
+      'POST /api/sync/data-sources': '创建同步数据源配置',
+      'PUT /api/sync/data-sources/:id': '更新同步数据源配置',
+      'DELETE /api/sync/data-sources/:id': '删除同步数据源配置',
+      // 单数据源同步接口
+      'POST /api/sync/data-sources/:id/sync': '同步单个数据源',
+      'POST /api/sync/data-source/sync': '按 dataSourceId 同步单个数据源',
       // 查询已配置表数据接口
       'GET /api/sync/table/:tableName': '查询已配置表的数据列表',
       'GET /api/sync/table/:tableName/count': '查询已配置表的记录数',
@@ -233,7 +233,7 @@ router.get('/status', (req: Request, res: Response) => {
     success: true,
     message: '同步服务就绪',
     config: {
-      // 数据库ID从sync_databases表动态获取，此处仅显示配置状态
+      // 数据源ID从 sync_data_sources 表动态获取，此处仅显示配置状态
       notionIntegrationToken: getNotionConfig().integrationToken ? '***已配置***' : '***未配置***',
       mysqlHost: getMySQLConfig().host,
       mysqlDatabase: getMySQLConfig().database,
@@ -243,16 +243,16 @@ router.get('/status', (req: Request, res: Response) => {
 
 /**
  * ============================================
- * sync_databases CRUD 接口
+ * sync_data_sources CRUD 接口（Data Sources）
  * ============================================
  */
 
 /**
- * GET /api/sync/databases
- * 获取同步数据库配置列表（需要认证）
+ * GET /api/sync/data-sources
+ * 获取同步数据源配置列表（需要认证）
  */
 router.get(
-  '/databases',
+  '/data-sources',
   createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -284,11 +284,11 @@ router.get(
 );
 
 /**
- * GET /api/sync/databases/:id
- * 获取同步数据库配置详情（需要认证）
+ * GET /api/sync/data-sources/:id
+ * 获取同步数据源配置详情（需要认证）
  */
 router.get(
-  '/databases/:id',
+  '/data-sources/:id',
   createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -324,12 +324,12 @@ router.get(
 );
 
 /**
- * POST /api/sync/databases
- * 创建同步数据库配置（需要认证）
+ * POST /api/sync/data-sources
+ * 创建同步数据源配置（需要认证）
  *
  * 请求体:
  * {
- *   notionDatabaseId: string,  // Notion数据库ID (必填)
+ *   notionDataSourceId: string, // Notion data_source_id
  *   tableName: string,         // MySQL表名 (必填)
  *   databaseName: string,      // 数据库名称 (必填)
  *   status?: 'active' | 'inactive',  // 状态 (默认active)
@@ -338,25 +338,25 @@ router.get(
  * }
  */
 router.post(
-  '/databases',
+  '/data-sources',
   createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const service = getSyncDatabaseService();
       await service.initialize();
 
-      const { notionDatabaseId, tableName, databaseName, status, syncInterval, remark } = req.body;
+      const { notionDataSourceId, tableName, databaseName, status, syncInterval, remark } = req.body;
 
       // 参数验证
-      if (!notionDatabaseId || !tableName || !databaseName) {
+      if (!notionDataSourceId || !tableName || !databaseName) {
         return res.status(400).json({
           success: false,
-          message: '缺少必填参数: notionDatabaseId, tableName, databaseName',
+          message: '缺少必填参数: notionDataSourceId, tableName, databaseName',
         });
       }
 
       const database = await service.create({
-        notionDatabaseId,
+        notionDataSourceId,
         tableName,
         databaseName,
         status,
@@ -382,8 +382,8 @@ router.post(
 );
 
 /**
- * PUT /api/sync/databases/:id
- * 更新同步数据库配置（需要认证）
+ * PUT /api/sync/data-sources/:id
+ * 更新同步数据源配置（需要认证）
  *
  * 请求体:
  * {
@@ -395,7 +395,7 @@ router.post(
  * }
  */
 router.put(
-  '/databases/:id',
+  '/data-sources/:id',
   createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -445,11 +445,11 @@ router.put(
 );
 
 /**
- * DELETE /api/sync/databases/:id
- * 删除同步数据库配置（需要认证）
+ * DELETE /api/sync/data-sources/:id
+ * 删除同步数据源配置（需要认证）
  */
 router.delete(
-  '/databases/:id',
+  '/data-sources/:id',
   createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -485,16 +485,16 @@ router.delete(
 
 /**
  * ============================================
- * 单数据库同步接口（需要认证）
+ * 单数据源同步接口（需要认证）
  * ============================================
  */
 
 /**
- * POST /api/sync/databases/:id/sync
- * 根据配置ID同步单个数据库（需要认证）
+ * POST /api/sync/data-sources/:id/sync
+ * 根据配置ID同步单个数据源（需要认证）
  */
 router.post(
-  '/databases/:id/sync',
+  '/data-sources/:id/sync',
   createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -509,12 +509,12 @@ router.post(
         });
       }
 
-      // 获取数据库配置
+      // 获取数据源配置
       const database = await service.findById(id);
       if (!database) {
         return res.status(404).json({
           success: false,
-          message: '数据库配置不存在',
+          message: '数据源配置不存在',
         });
       }
 
@@ -532,7 +532,7 @@ router.post(
         tableName: database.tableName,
         debugMode: req.body?.debug === true,
       });
-      engine.setDatabaseId(database.notionDatabaseId);
+      engine.setDataSourceId(database.notionDataSourceId);
 
       const result = await engine.syncDatabase(database.tableName);
 
@@ -547,7 +547,7 @@ router.post(
           message: '同步成功',
           data: {
             databaseId: database.id,
-            notionDatabaseId: database.notionDatabaseId,
+            notionDataSourceId: database.notionDataSourceId,
             tableName: database.tableName,
             result: {
               totalRecords: result.totalRecords,
@@ -566,7 +566,7 @@ router.post(
           error: result.error,
           data: {
             databaseId: database.id,
-            notionDatabaseId: database.notionDatabaseId,
+            notionDataSourceId: database.notionDataSourceId,
             tableName: database.tableName,
             result: {
               totalRecords: result.totalRecords,
@@ -582,27 +582,27 @@ router.post(
 );
 
 /**
- * POST /api/sync/database/sync
- * 根据databaseId同步单个数据库（需要认证）
+ * POST /api/sync/data-source/sync
+ * 根据 dataSourceId 同步单个数据源（需要认证）
  *
  * 请求体:
  * {
- *   databaseId: string,  // Notion数据库ID (必填)
+ *   dataSourceId: string, // Notion data_source_id
  *   tableName: string,   // MySQL表名 (必填)
  *   debug?: boolean      // 是否启用调试模式
  */
 router.post(
-  '/database/sync',
+  '/data-source/sync',
   createAuthMiddleware((token: string) => getUserService().verifyToken(token)),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { databaseId, tableName, debug } = req.body;
+      const { dataSourceId, tableName, debug } = req.body;
 
       // 参数验证
-      if (!databaseId || !tableName) {
+      if (!dataSourceId || !tableName) {
         return res.status(400).json({
           success: false,
-          message: '缺少必填参数: databaseId, tableName',
+          message: '缺少必填参数: dataSourceId, tableName',
         });
       }
 
@@ -613,7 +613,7 @@ router.post(
         tableName,
         debugMode: debug === true,
       });
-      engine.setDatabaseId(databaseId);
+      engine.setDataSourceId(dataSourceId);
 
       const result = await engine.syncDatabase(tableName);
 
@@ -622,7 +622,7 @@ router.post(
           success: true,
           message: '同步成功',
           data: {
-            notionDatabaseId: databaseId,
+            notionDataSourceId: dataSourceId,
             tableName,
             result: {
               totalRecords: result.totalRecords,
@@ -640,7 +640,7 @@ router.post(
           message: '同步失败',
           error: result.error,
           data: {
-            notionDatabaseId: databaseId,
+            notionDataSourceId: dataSourceId,
             tableName,
             result: {
               totalRecords: result.totalRecords,
@@ -702,7 +702,7 @@ router.get(
         data: result,
       });
     } catch (error) {
-      if ((error as Error).message.includes('未在 sync_databases 中配置') || (error as Error).message.includes('已禁用')) {
+      if ((error as Error).message.includes('未在 sync_data_sources 中配置') || (error as Error).message.includes('已禁用')) {
         return res.status(403).json({
           success: false,
           message: (error as Error).message,
@@ -738,7 +738,7 @@ router.get(
         },
       });
     } catch (error) {
-      if ((error as Error).message.includes('未在 sync_databases 中配置') || (error as Error).message.includes('已禁用')) {
+      if ((error as Error).message.includes('未在 sync_data_sources 中配置') || (error as Error).message.includes('已禁用')) {
         return res.status(403).json({
           success: false,
           message: (error as Error).message,
@@ -778,7 +778,7 @@ router.get(
         data: record,
       });
     } catch (error) {
-      if ((error as Error).message.includes('未在 sync_databases 中配置') || (error as Error).message.includes('已禁用')) {
+      if ((error as Error).message.includes('未在 sync_data_sources 中配置') || (error as Error).message.includes('已禁用')) {
         return res.status(403).json({
           success: false,
           message: (error as Error).message,

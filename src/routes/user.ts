@@ -421,16 +421,17 @@ router.get(
  *   }
  * }
  */
-router.post('/master-token', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/master-token', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { userId } = req.body;
 
     if (!userId) {
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
         message: 'userId是必填项',
         code: 'MISSING_FIELDS',
       });
+      return;
     }
 
     const service = getUserService();
@@ -439,11 +440,12 @@ router.post('/master-token', async (req: Request, res: Response, next: NextFunct
     // 获取用户信息
     const user = await service.getUserById(userId);
     if (!user) {
-      return res.status(404).json({
+      res.status(404).json({
         success: false,
         message: '用户不存在',
         code: 'USER_NOT_FOUND',
       });
+      return;
     }
 
     // 生成万能Token
@@ -461,8 +463,10 @@ router.post('/master-token', async (req: Request, res: Response, next: NextFunct
         },
       },
     });
+    return;
   } catch (error) {
     next(error);
+    return;
   }
 });
 

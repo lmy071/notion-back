@@ -8,7 +8,7 @@ import dotenv from 'dotenv';
 import { SyncEngine, createSyncEngine } from './syncEngine';
 import { INotionConfig, isNotionConfigValid } from './setting';
 import { IMySQLConfig, isMySQLConfigValid } from './mysql';
-import { getDatabaseConfigManager, IDatabaseConfig } from './databaseConfig';
+import { getDatabaseConfigManager, IDataSourceConfig } from './databaseConfig';
 
 /**
  * 加载环境变量配置
@@ -25,8 +25,8 @@ interface SyncOptions {
   skipValidation?: boolean;
   /** 同步所有数据库 */
   all?: boolean;
-  /** 指定数据库ID */
-  databaseId?: string;
+  /** 指定 data source id */
+  dataSourceId?: string;
   /** 指定表名 */
   tableName?: string;
 }
@@ -40,8 +40,8 @@ function printHelp(): void {
 
 选项:
   --debug          启用调试模式，输出详细日志
-  --all            同步所有数据库（从sync_databases表读取配置）
-  --id <id>        指定同步单个数据库（数据库ID或表名）
+  --all            同步所有数据源（从sync_data_sources表读取配置）
+  --id <id>        指定同步单个数据源（data_source_id或表名）
   --skip-validation  跳过配置验证（仅用于测试）
   --help, -h       显示此帮助信息
 
@@ -74,14 +74,14 @@ function parseArgs(): SyncOptions {
         break;
 
       case '--id':
-      case '--database-id':
+      case '--data-source-id':
       case '--table':
         if (i + 1 < argv.length) {
           const value = argv[i + 1];
           if (arg === '--table' || arg === '--id') {
             args.tableName = value;
           } else {
-            args.databaseId = value;
+            args.dataSourceId = value;
           }
           i++;
         }
@@ -145,13 +145,13 @@ function validateConfigs(
 }
 
 /**
- * 从数据库表获取所有启用的数据库配置
+ * 从数据库表获取所有启用的数据源配置
  * @param mysqlConfig - MySQL配置
- * @returns Promise<IDatabaseConfig[]> - 数据库配置数组
+ * @returns Promise<IDataSourceConfig[]> - 数据源配置数组
  */
-async function getDatabasesFromTable(
+async function getDataSourcesFromTable(
   mysqlConfig: IMySQLConfig
-): Promise<IDatabaseConfig[]> {
+): Promise<IDataSourceConfig[]> {
   // 动态导入mysql2
   const mysql = await import('mysql2/promise');
   const pool = mysql.createPool({
@@ -164,12 +164,12 @@ async function getDatabasesFromTable(
 
   try {
     const [rows] = await pool.query<any[]>(
-      'SELECT * FROM sync_databases WHERE status = ? ORDER BY id',
+      'SELECT * FROM sync_data_sources WHERE status = ? ORDER BY id',
       ['active']
     );
     return rows.map((row) => ({
       id: row.id,
-      notionDatabaseId: row.notion_database_id,
+      dataSourceId: row.notion_data_source_id,
       tableName: row.table_name,
       databaseName: row.database_name,
       status: row.status,
@@ -194,7 +194,7 @@ async function getDatabasesFromTable(
  */
 async function updateLastSyncTime(
   mysqlConfig: IMySQLConfig,
-  databaseId: number
+  configId: number
 ): Promise<void> {
   const mysql = await import('mysql2/promise');
   const pool = mysql.createPool({
@@ -207,8 +207,8 @@ async function updateLastSyncTime(
 
   try {
     await pool.query(
-      'UPDATE sync_databases SET last_sync_at = ?, updated_at = ? WHERE id = ?',
-      [new Date(), new Date(), databaseId]
+      'UPDATE sync_data_sources SET last_sync_at = ?, updated_at = ? WHERE id = ?',
+      [new Date(), new Date(), configId]
     );
   } catch (error) {
     console.warn('⚠️  更新同步时间失败:', (error as Error).message);
@@ -221,13 +221,13 @@ async function updateLastSyncTime(
  * 同步单个数据库
  */
 async function syncSingleDatabase(
-  config: IDatabaseConfig,
+  config: IDataSourceConfig,
   notionConfig: INotionConfig,
   mysqlConfig: IMySQLConfig,
   debugMode: boolean
 ): Promise<void> {
   console.log('');
-  console.log(`🚀 开始同步: ${config.notionDatabaseId} -> ${config.tableName}`);
+  console.log(`🚀 开始同步: ${config.dataSourceId} -> ${config.tableName}`);
 
   // 创建同步引擎（databaseId通过setDatabaseId方法设置）
   const engine = createSyncEngine({
@@ -238,7 +238,7 @@ async function syncSingleDatabase(
   });
 
   // 设置数据库ID并同步
-  engine.setDatabaseId(config.notionDatabaseId);
+  engine.setDataSourceId(config.dataSourceId);
   const result = await engine.syncDatabase(config.tableName);
 
   try {
@@ -317,15 +317,16 @@ async function main(): Promise<void> {
 
   // 从数据库表获取所有启用的数据库配置
   console.log('');
-  console.log('📥 从sync_databases表读取数据库配置...');
-  const databases = await getDatabasesFromTable(mysqlConfig);
+  // 2025-09-03 起：配置表为 sync_data_sources
+  console.log('📥 从sync_data_sources表读取数据源配置...');
+  const databases = await getDataSourcesFromTable(mysqlConfig);
 
   if (databases.length === 0) {
     console.error('❌ 没有找到启用的数据库配置');
-    console.log('💡 请在sync_databases表中添加配置:');
+    console.log('💡 请在sync_data_sources表中添加配置:');
     console.log(`
-    INSERT INTO sync_databases (notion_database_id, table_name, database_name, status, remark)
-    VALUES ('your-notion-database-id', 'your_table_name', 'notion_sync', 'active', '备注');
+    INSERT INTO sync_data_sources (notion_data_source_id, table_name, database_name, status, remark)
+    VALUES ('your-data-source-id', 'your_table_name', 'notion_sync', 'active', '备注');
     `);
     process.exit(1);
   }
@@ -348,18 +349,18 @@ async function main(): Promise<void> {
     console.log('═══════════════════════════════════════════════════════════');
     console.log('📊 批量同步完成');
     console.log('═══════════════════════════════════════════════════════════');
-  } else if (options.databaseId || options.tableName) {
+  } else if (options.dataSourceId || options.tableName) {
     // 同步指定数据库
-    const targetId = options.databaseId || options.tableName;
+    const targetId = options.dataSourceId || options.tableName;
     const targetDb = databases.find(
-      (db) => db.notionDatabaseId === targetId || db.tableName === targetId
+      (db) => db.dataSourceId === targetId || db.tableName === targetId
     );
 
     if (!targetDb) {
       console.error(`❌ 未找到数据库配置: ${targetId}`);
       console.log('💡 可用配置:');
       for (const db of databases) {
-        console.log(`   - ${db.notionDatabaseId} (表: ${db.tableName})`);
+        console.log(`   - ${db.dataSourceId} (表: ${db.tableName})`);
       }
       process.exit(1);
     }
@@ -374,7 +375,7 @@ async function main(): Promise<void> {
     console.log('');
     console.log('📋 待同步数据库列表:');
     for (const db of databases) {
-      console.log(`   - ${db.notionDatabaseId} -> ${db.tableName} ${db.remark ? `(${db.remark})` : ''}`);
+      console.log(`   - ${db.dataSourceId} -> ${db.tableName} ${db.remark ? `(${db.remark})` : ''}`);
     }
 
     console.log('');

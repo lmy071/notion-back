@@ -13,8 +13,8 @@ import path from 'path';
 export interface ISyncLog {
   /** 同步时间 */
   timestamp: string;
-  /** 数据库ID */
-  databaseId: string;
+  /** Notion data_source_id */
+  dataSourceId: string;
   /** 获取到的页面数量 */
   pageCount: number;
   /** 页面元数据 */
@@ -71,14 +71,14 @@ export class SyncLogger {
 
   /**
    * 保存同步日志
-   * @param databaseId - Notion数据库ID
+   * @param dataSourceId - Notion data_source_id
    * @param pages - 获取到的页面数据
    * @param success - 是否成功
    * @param error - 错误信息（可选）
    * @returns 日志文件路径
    */
   saveLog(
-    databaseId: string,
+    dataSourceId: string,
     pages: Array<{
       id: string;
       created_time?: string | null;
@@ -91,7 +91,7 @@ export class SyncLogger {
   ): string {
     const logData: ISyncLog = {
       timestamp: new Date().toISOString(),
-      databaseId,
+      dataSourceId,
       pageCount: pages.length,
       pages: pages.map((page) => ({
         id: page.id,

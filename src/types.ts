@@ -718,30 +718,27 @@ export interface INotionResponse<T> {
 
 /**
  * ============================================
- * sync_databases 表类型定义
+ * sync_data_sources 表类型定义
  * ============================================
  */
 
 /**
  * 同步数据库配置状态枚举
  */
-export type SyncDatabaseStatus = 'active' | 'inactive';
+export type SyncDataSourceStatus = 'active' | 'inactive';
 
-/**
- * 同步数据库配置接口
- * 对应 sync_databases 表结构
- */
-export interface ISyncDatabase {
+/** 同步数据源配置接口（对应 sync_data_sources 表结构） */
+export interface ISyncDataSource {
   /** 配置ID */
   id: number;
-  /** Notion数据库ID */
-  notionDatabaseId: string;
+  /** Notion data_source_id */
+  notionDataSourceId: string;
   /** MySQL表名 */
   tableName: string;
   /** 数据库名称 */
   databaseName: string;
   /** 同步状态 */
-  status: SyncDatabaseStatus;
+  status: SyncDataSourceStatus;
   /** 同步间隔（秒） */
   syncInterval: number;
   /** 上次同步时间 */
@@ -757,15 +754,15 @@ export interface ISyncDatabase {
 /**
  * 创建同步数据库配置请求
  */
-export interface ICreateSyncDatabaseRequest {
-  /** Notion数据库ID */
-  notionDatabaseId: string;
+export interface ICreateSyncDataSourceRequest {
+  /** Notion data_source_id */
+  notionDataSourceId: string;
   /** MySQL表名 */
   tableName: string;
   /** 数据库名称 */
   databaseName: string;
   /** 同步状态 */
-  status?: SyncDatabaseStatus;
+  status?: SyncDataSourceStatus;
   /** 同步间隔（秒） */
   syncInterval?: number;
   /** 备注 */
@@ -775,13 +772,13 @@ export interface ICreateSyncDatabaseRequest {
 /**
  * 更新同步数据库配置请求
  */
-export interface IUpdateSyncDatabaseRequest {
+export interface IUpdateSyncDataSourceRequest {
   /** MySQL表名 */
   tableName?: string;
   /** 数据库名称 */
   databaseName?: string;
   /** 同步状态 */
-  status?: SyncDatabaseStatus;
+  status?: SyncDataSourceStatus;
   /** 同步间隔（秒） */
   syncInterval?: number;
   /** 备注 */
@@ -791,9 +788,9 @@ export interface IUpdateSyncDatabaseRequest {
 /**
  * 同步数据库列表查询参数
  */
-export interface ISyncDatabaseListQuery {
+export interface ISyncDataSourceListQuery {
   /** 状态筛选 */
-  status?: SyncDatabaseStatus;
+  status?: SyncDataSourceStatus;
   /** 页码 */
   page?: number;
   /** 每页数量 */
