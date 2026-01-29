@@ -78,6 +78,32 @@ router.post('/login', async (req, res) => {
 });
 
 /**
+ * 获取 API 调用日志
+ * GET /api/logs
+ */
+router.get('/logs', authenticate, async (req, res) => {
+    try {
+        const logs = await db.query('SELECT * FROM api_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT 100', [req.user.id]);
+        res.json({ success: true, data: logs });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 获取 Notion API 密钥等全局信息
+ * GET /api/configs
+ */
+router.get('/configs', authenticate, async (req, res) => {
+    try {
+        const configs = await db.getAllConfigs(req.user.id);
+        res.json({ success: true, data: configs });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
  * 配置 Notion API 密钥等全局信息
  * POST /api/config
  */
