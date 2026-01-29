@@ -1,5 +1,36 @@
 [
   {
+    "timestamp": "2026-01-29T11:08:30.884Z",
+    "path": "/api/dict/permissions",
+    "method": "GET",
+    "headers": {
+      "accept-language": "zh-CN",
+      "accept-encoding": "gzip, deflate, br, zstd",
+      "referer": "http://localhost:5173/configs",
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua": "\"Not_A Brand\";v=\"99\", \"Chromium\";v=\"142\"",
+      "accept": "application/json, text/plain, */*",
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Trae/1.107.1 Chrome/142.0.7444.235 Electron/39.2.7 Safari/537.36",
+      "x-user-id": "2",
+      "sec-ch-ua-platform": "\"macOS\"",
+      "connection": "close",
+      "host": "localhost:3000"
+    },
+    "query": {},
+    "params": {},
+    "body": {},
+    "response": {
+      "status": 403,
+      "body": {
+        "success": false,
+        "message": "需要管理员权限"
+      }
+    }
+  },
+  {
     "timestamp": "2026-01-28T14:58:16.183Z",
     "path": "/api/databases",
     "method": "GET",
@@ -1094,17 +1125,6 @@
       "status": 400,
       "body": {
         "error": "Error 12"
-      }
-    }
-  },
-  {
-    "timestamp": "2026-01-28T14:55:48.476Z",
-    "path": "/api/test/11",
-    "method": "GET",
-    "response": {
-      "status": 400,
-      "body": {
-        "error": "Error 11"
       }
     }
   }
