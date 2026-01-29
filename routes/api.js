@@ -3,6 +3,7 @@ const router = express.Router();
 const Auth = require('../lib/auth');
 const db = require('../lib/db');
 const SyncEngine = require('../lib/sync');
+const NotionClient = require('../lib/notion');
 
 /**
  * 简单的身份验证中间件
@@ -172,9 +173,19 @@ router.post('/sync/:databaseId', authenticate, async (req, res) => {
  */
 router.get('/data/:databaseId', authenticate, async (req, res) => {
     const { databaseId } = req.params;
-    const tableName = `user_${req.user.id}_notion_data_${databaseId.replace(/-/g, '_')}`;
     
     try {
+        // 先根据 database_id 找到对应的数据源名称（用于生成表名）
+        const dsInfo = await db.query('SELECT name FROM notion_data_sources WHERE database_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1', [databaseId, req.user.id]);
+        
+        let tableName;
+        if (dsInfo.length > 0 && dsInfo[0].name) {
+            tableName = NotionClient.generateTableName(req.user.id, dsInfo[0].name);
+        } else {
+            // 回退到旧的命名方式
+            tableName = `user_${req.user.id}_notion_data_${databaseId.replace(/-/g, '_')}`;
+        }
+        
         // 先检查表是否存在，限定在当前数据库内
         const checkTableSql = `SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = ? AND table_schema = DATABASE()`;
         const tableExists = await db.query(checkTableSql, [tableName]);
@@ -317,6 +328,76 @@ router.delete('/dict/permissions/:id', authenticate, isAdmin, async (req, res) =
     try {
         await db.query('DELETE FROM dict_table WHERE id = ?', [req.params.id]);
         res.json({ success: true, message: '权限项已删除' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 获取特定数据库下的所有数据源
+ * GET /api/data_sources/:databaseId
+ */
+router.get('/data_sources/:databaseId', authenticate, async (req, res) => {
+    const { databaseId } = req.params;
+    try {
+        const dataSources = await db.query('SELECT * FROM notion_data_sources WHERE user_id = ? AND database_id = ?', [req.user.id, databaseId]);
+        res.json({ success: true, data: dataSources });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 根据获取到的字段列属性重新创建对应的数据库表
+ * GET/POST /api/data_sources/:dataSourceId/recreate-table
+ */
+router.all('/data_sources/:dataSourceId/recreate-table', authenticate, async (req, res) => {
+    const { dataSourceId } = req.params;
+    let databaseId = req.body.databaseId || req.query.databaseId;
+
+    try {
+        // 如果没有提供 databaseId，尝试从数据库中查找
+        if (!databaseId) {
+            const dsInfo = await db.query('SELECT database_id FROM notion_data_sources WHERE data_source_id = ? AND user_id = ?', [dataSourceId, req.user.id]);
+            if (dsInfo.length > 0) {
+                databaseId = dsInfo[0].database_id;
+            }
+        }
+
+        if (!databaseId) {
+            return res.status(400).json({ success: false, message: '缺少 databaseId 参数，且无法通过 dataSourceId 自动关联' });
+        }
+
+        const configs = await db.getAllConfigs(req.user.id);
+        const apiKey = configs.notion_api_key;
+        const notionVersion = configs.notion_version || '2025-09-03';
+
+        if (!apiKey) {
+            return res.status(400).json({ success: false, message: '未配置 Notion API Key' });
+        }
+
+        const notion = new NotionClient(req.user.id, apiKey, notionVersion);
+        
+        // 1. 获取数据源结构
+        const structure = await notion.getDataSourceStructure(dataSourceId);
+        const properties = structure.properties;
+        const dsTitle = structure.title || 'notion_data';
+
+        // 2. 映射字段
+        const tableName = NotionClient.generateTableName(req.user.id, dsTitle);
+        const { columns } = notion.mapNotionToMysql(properties);
+
+        // 3. 重新建表 (先删后建)
+        await db.query(`DROP TABLE IF EXISTS \`${tableName}\``);
+        
+        const createTableSql = `CREATE TABLE \`${tableName}\` (
+            ${columns.join(', ')},
+            \`synced_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`;
+        
+        await db.query(createTableSql);
+
+        res.json({ success: true, message: `表 ${tableName} 已根据数据源 ${dataSourceId} 的结构重新创建` });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
