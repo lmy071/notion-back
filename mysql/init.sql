@@ -9,18 +9,21 @@ CREATE TABLE IF NOT EXISTS `users` (
     `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户管理表';
 
--- 配置表
-CREATE TABLE IF NOT EXISTS `configs` (
-    `id` INT AUTO_INCREMENT PRIMARY KEY COMMENT '配置 ID',
-    `config_key` VARCHAR(100) NOT NULL UNIQUE COMMENT '配置键名',
+-- 用户级 Notion 配置表 (替代原 configs 表)
+CREATE TABLE IF NOT EXISTS `user_configs` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT NOT NULL COMMENT '所属用户 ID',
+    `config_key` VARCHAR(100) NOT NULL COMMENT '配置键名',
     `config_value` TEXT COMMENT '配置值',
-    `description` VARCHAR(255) COMMENT '描述',
-    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统配置表';
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_user_key` (`user_id`, `config_key`),
+    FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户级 Notion 配置表';
 
--- 日志表
+-- API 调用日志表
 CREATE TABLE IF NOT EXISTS `api_logs` (
     `id` INT AUTO_INCREMENT PRIMARY KEY COMMENT '日志 ID',
+    `user_id` INT COMMENT '执行用户 ID',
     `url` VARCHAR(255) NOT NULL COMMENT '接口地址',
     `method` VARCHAR(10) NOT NULL COMMENT '请求方法',
     `params` TEXT COMMENT '请求参数',
@@ -28,17 +31,21 @@ CREATE TABLE IF NOT EXISTS `api_logs` (
     `response_body` LONGTEXT COMMENT '响应结果',
     `is_success` TINYINT(1) DEFAULT 0 COMMENT '是否成功',
     `error_message` TEXT COMMENT '异常信息',
-    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '调用时间'
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '调用时间',
+    FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='API 调用日志表';
 
--- Notion 同步目标表 (支持多数据库)
+-- Notion 同步目标表 (支持多用户、多数据库)
 CREATE TABLE IF NOT EXISTS `notion_sync_targets` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
-    `database_id` VARCHAR(100) NOT NULL UNIQUE COMMENT 'Notion 数据库 ID',
+    `user_id` INT NOT NULL COMMENT '所属用户 ID',
+    `database_id` VARCHAR(100) NOT NULL COMMENT 'Notion 数据库 ID',
     `name` VARCHAR(100) COMMENT '数据库别名/名称',
     `status` TINYINT(1) DEFAULT 1 COMMENT '是否启用同步: 1启用, 0禁用',
     `last_sync_at` TIMESTAMP NULL COMMENT '最后同步时间',
-    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_user_db` (`user_id`, `database_id`),
+    FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Notion 同步目标配置表';
 
 -- 权限字典表
@@ -50,19 +57,12 @@ CREATE TABLE IF NOT EXISTS `dict_table` (
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='权限字典表';
 
--- 初始化默认配置示例
-INSERT IGNORE INTO `configs` (`config_key`, `config_value`, `description`) VALUES 
-('notion_api_key', '', 'Notion Integration Token'),
-('notion_database_id', '', 'Notion Database ID to sync'),
-('notion_version', '2022-06-28', 'Notion API Version'),
-('sync_frequency', '3600', 'Sync frequency in seconds');
-
 -- 初始化权限字典
 INSERT IGNORE INTO `dict_table` (`dict_code`, `dict_name`, `category`) VALUES 
 ('sync:notion', '执行 Notion 同步权限', 'permission'),
 ('user:manage', '用户管理权限', 'permission'),
 ('config:manage', '系统配置权限', 'permission');
 
--- 初始化默认管理员
+-- 初始化默认管理员 (密码: admin123)
 INSERT IGNORE INTO `users` (`username`, `password`, `permissions`, `role`) VALUES 
-('admin', 'admin123', 'sync:notion,user:manage', 'admin');
+('admin', 'admin123', 'sync:notion,user:manage,config:manage', 'admin');

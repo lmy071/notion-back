@@ -84,10 +84,10 @@ router.post('/config', authenticate, async (req, res) => {
     const { apiKey, version } = req.body;
     
     try {
-        if (apiKey) await db.updateConfig('notion_api_key', apiKey);
-        if (version) await db.updateConfig('notion_version', version);
+        if (apiKey) await db.updateConfig(req.user.id, 'notion_api_key', apiKey);
+        if (version) await db.updateConfig(req.user.id, 'notion_version', version);
 
-        res.json({ success: true, message: '全局配置已更新' });
+        res.json({ success: true, message: '配置已更新' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -102,7 +102,7 @@ router.post('/databases', authenticate, async (req, res) => {
     if (!databaseId) return res.status(400).json({ success: false, message: '缺少 databaseId' });
 
     try {
-        await db.query('INSERT INTO notion_sync_targets (database_id, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name)', [databaseId, name]);
+        await db.query('INSERT INTO notion_sync_targets (user_id, database_id, name) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name)', [req.user.id, databaseId, name]);
         res.json({ success: true, message: '数据库已添加' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -110,12 +110,12 @@ router.post('/databases', authenticate, async (req, res) => {
 });
 
 /**
- * 获取所有已配置的数据库
+ * 获取当前用户已配置的数据库
  * GET /api/databases
  */
 router.get('/databases', authenticate, async (req, res) => {
     try {
-        const targets = await db.query('SELECT * FROM notion_sync_targets');
+        const targets = await db.query('SELECT * FROM notion_sync_targets WHERE user_id = ?', [req.user.id]);
         res.json({ success: true, data: targets });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -128,7 +128,11 @@ router.get('/databases', authenticate, async (req, res) => {
  */
 router.delete('/databases/:id', authenticate, async (req, res) => {
     try {
-        await db.query('DELETE FROM notion_sync_targets WHERE id = ?', [req.params.id]);
+        // 增加 user_id 校验，防止越权删除
+        const result = await db.query('DELETE FROM notion_sync_targets WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ success: false, message: '配置不存在或无权操作' });
+        }
         res.json({ success: true, message: '数据库配置已删除' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -168,7 +172,7 @@ router.post('/sync/:databaseId', authenticate, async (req, res) => {
  */
 router.get('/data/:databaseId', authenticate, async (req, res) => {
     const { databaseId } = req.params;
-    const tableName = `notion_data_${databaseId.replace(/-/g, '_')}`;
+    const tableName = `user_${req.user.id}_notion_data_${databaseId.replace(/-/g, '_')}`;
     
     try {
         // 先检查表是否存在，限定在当前数据库内
@@ -197,11 +201,11 @@ router.get('/logs', authenticate, async (req, res) => {
     const { isSuccess, limit = 50, offset = 0 } = req.query;
     
     try {
-        let sql = 'SELECT * FROM api_logs';
-        const params = [];
+        let sql = 'SELECT * FROM api_logs WHERE user_id = ?';
+        const params = [req.user.id];
 
         if (isSuccess !== undefined) {
-            sql += ' WHERE is_success = ?';
+            sql += ' AND is_success = ?';
             params.push(isSuccess);
         }
 
@@ -211,8 +215,8 @@ router.get('/logs', authenticate, async (req, res) => {
         const logs = await db.query(sql, params);
         
         // 获取总数用于分页
-        const countSql = isSuccess !== undefined ? 'SELECT COUNT(*) as total FROM api_logs WHERE is_success = ?' : 'SELECT COUNT(*) as total FROM api_logs';
-        const totalResult = await db.query(countSql, isSuccess !== undefined ? [isSuccess] : []);
+        const countSql = isSuccess !== undefined ? 'SELECT COUNT(*) as total FROM api_logs WHERE user_id = ? AND is_success = ?' : 'SELECT COUNT(*) as total FROM api_logs WHERE user_id = ?';
+        const totalResult = await db.query(countSql, isSuccess !== undefined ? [req.user.id, isSuccess] : [req.user.id]);
         
         res.json({ 
             success: true, 
@@ -319,12 +323,12 @@ router.delete('/dict/permissions/:id', authenticate, isAdmin, async (req, res) =
 });
 
 /**
- * 获取当前配置 (用于回显)
+ * 获取当前用户的配置 (用于回显)
  * GET /api/config
  */
 router.get('/config', authenticate, async (req, res) => {
     try {
-        const configs = await db.getAllConfigs();
+        const configs = await db.getAllConfigs(req.user.id);
         res.json({ success: true, data: configs });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
