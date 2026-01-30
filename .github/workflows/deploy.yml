@@ -51,6 +51,19 @@ jobs:
           password: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
           script: |
+            # 尝试加载 nvm (如果安装在默认路径)
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            
+            # 确保使用正确的 Node 版本
+            nvm use 24.11.1 || nvm install 24.11.1
+            
             cd /www/web/notion-sync
-            npm install --production
+            npm install --omit=dev
+            
+            # 尝试使用 pm2，如果找不到则尝试安装或使用绝对路径
+            if ! command -v pm2 &> /dev/null; then
+              npm install -g pm2
+            fi
+            
             pm2 restart notion-sync || pm2 start ./bin/www --name notion-sync
