@@ -758,4 +758,41 @@ router.get('/config', authenticate, async (req, res) => {
     }
 });
 
+/**
+ * 上报监控数据 (性能与错误)
+ * POST /api/monitoring
+ */
+router.post('/monitoring', async (req, res) => {
+    const { type, event, url, data, ua } = req.body;
+    const userId = req.headers['x-user-id'] || null;
+
+    try {
+        // 1. 插入新日志
+        await db.query(
+            'INSERT INTO monitoring_logs (user_id, type, event, url, data, ua) VALUES (?, ?, ?, ?, ?, ?)',
+            [userId, type, event, url, JSON.stringify(data), ua]
+        );
+
+        // 2. 限制存储量为 1000 条
+        // 获取当前总数
+        const countResult = await db.query('SELECT COUNT(*) as count FROM monitoring_logs');
+        const count = countResult[0].count;
+
+        if (count > 1000) {
+            // 删除多余的旧日志
+            const limit = count - 1000;
+            await db.query(
+                'DELETE FROM monitoring_logs ORDER BY created_at ASC LIMIT ?',
+                [limit]
+            );
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Monitoring report error:', error);
+        // 监控接口即使失败也不应影响主流程，但返回错误码
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 module.exports = router;

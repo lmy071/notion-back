@@ -49,6 +49,19 @@ CREATE TABLE IF NOT EXISTS `notion_sync_targets` (
     FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Notion 同步目标配置表';
 
+-- 监控日志表 (性能与错误)
+CREATE TABLE IF NOT EXISTS `monitoring_logs` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT COMMENT '触发用户 ID',
+    `type` VARCHAR(20) NOT NULL COMMENT '类型: performance, error',
+    `event` VARCHAR(50) COMMENT '具体事件名称',
+    `url` TEXT COMMENT '触发页面 URL',
+    `data` JSON COMMENT '详细数据内容',
+    `ua` TEXT COMMENT '用户浏览器 UA',
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='前端监控日志表';
+
 -- 权限字典表
 CREATE TABLE IF NOT EXISTS `dict_table` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
