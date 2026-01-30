@@ -4,15 +4,10 @@ on:
   push:
     branches:
       - master
-    paths:
-      - 'notion-sync/**'
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: notion-sync
 
     steps:
       - name: Checkout code
@@ -23,7 +18,7 @@ jobs:
         with:
           node-version: '24.11.1'
           cache: 'npm'
-          cache-dependency-path: notion-sync/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm install
@@ -40,9 +35,9 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
-          source: "notion-sync/notion-sync"
+          source: "notion-sync"
           target: "/www/web"
-          strip_components: 1
+          strip_components: 0
 
       - name: Restart Backend Service
         uses: appleboy/ssh-action@v1.0.3
