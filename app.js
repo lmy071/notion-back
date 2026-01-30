@@ -27,6 +27,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+// 确保直接访问 /uploads 也能正确映射到 public/uploads
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 
 app.use(apiResponseInterceptor);
