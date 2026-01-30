@@ -540,6 +540,10 @@ router.get('/data/:databaseId', authenticate, async (req, res) => {
 router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
     const { databaseId, pageId } = req.params;
     
+    // 归一化 ID (去除连字符) 用于比较
+    const normalizeId = (id) => id.replace(/-/g, '').toLowerCase();
+    const normalizedPageId = normalizeId(pageId);
+
     try {
         // 1. 获取数据源名称以生成表名
         const dsInfo = await db.query('SELECT name FROM notion_data_sources WHERE database_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1', [databaseId, req.user.id]);
@@ -561,8 +565,9 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
             return res.json({ success: true, data: [], synced: false, message: '该页面尚未同步，请先执行同步' });
         }
 
-        // 3. 从数据库查询所有 Block
-        const rows = await db.query(`SELECT * FROM \`${detailTableName}\` WHERE page_id = ?`, [pageId]);
+        // 3. 从数据库查询所有 Block (使用原始 ID 查询，因为存储时用的是原始 ID)
+        // 但为了保险，我们查询该 page_id 相关的所有记录
+        const rows = await db.query(`SELECT * FROM \`${detailTableName}\` WHERE page_id = ? OR REPLACE(page_id, '-', '') = ?`, [pageId, normalizedPageId]);
         
         if (rows.length === 0) {
             return res.json({ success: true, data: [], synced: false, message: '该页面尚未同步，请先执行同步' });
@@ -570,10 +575,16 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
 
         // 4. 重建树形结构
         const buildTree = (parentId) => {
+            const normalizedParentId = normalizeId(parentId);
             return rows
-                .filter(row => row.parent_id === parentId)
+                .filter(row => normalizeId(row.parent_id) === normalizedParentId)
                 .map(row => {
-                    const content = JSON.parse(row.content);
+                    let content;
+                    try {
+                        content = typeof row.content === 'string' ? JSON.parse(row.content) : row.content;
+                    } catch (e) {
+                        content = row.content;
+                    }
                     return {
                         ...content,
                         children: buildTree(row.block_id)
