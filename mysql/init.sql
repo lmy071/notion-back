@@ -60,9 +60,10 @@ CREATE TABLE IF NOT EXISTS `dict_table` (
 -- 初始化权限字典
 INSERT IGNORE INTO `dict_table` (`dict_code`, `dict_name`, `category`) VALUES 
 ('sync:notion', '执行 Notion 同步权限', 'permission'),
+('data:delete', '删除数据连接权限', 'permission'),
 ('user:manage', '用户管理权限', 'permission'),
 ('config:manage', '系统配置权限', 'permission');
 
 -- 初始化默认管理员 (密码: admin123)
 INSERT IGNORE INTO `users` (`username`, `password`, `permissions`, `role`) VALUES 
-('admin', 'admin123', 'sync:notion,user:manage,config:manage', 'admin');
+('admin', 'admin123', 'sync:notion,data:delete,user:manage,config:manage', 'admin');

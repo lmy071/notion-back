@@ -161,14 +161,14 @@ router.get('/databases', authenticate, async (req, res) => {
                 let totalCount = 0;
                 try {
                     const countResult = await db.query(`SELECT COUNT(*) as total FROM \`${tableName}\``);
-                    totalCount = countResult[0].total;
+                    totalCount = Number(countResult[0].total || 0);
                 } catch (tableErr) {
                     // 如果第一个表名查不到，尝试备用表名
                     const fallbackTableName = `user_${req.user.id}_notion_data_${target.database_id.replace(/-/g, '_')}`;
                     if (fallbackTableName !== tableName) {
                         try {
                             const countResult = await db.query(`SELECT COUNT(*) as total FROM \`${fallbackTableName}\``);
-                            totalCount = countResult[0].total;
+                            totalCount = Number(countResult[0].total || 0);
                         } catch (fallbackErr) {
                             // 两个表都查不到，设为 0
                             totalCount = 0;
@@ -197,6 +197,12 @@ router.get('/databases', authenticate, async (req, res) => {
  */
 router.delete('/databases/:id', authenticate, async (req, res) => {
     try {
+        // 权限验证
+        const hasPermission = await Auth.checkPermission(req.user.id, 'data:delete');
+        if (!hasPermission) {
+            return res.status(403).json({ success: false, message: '无删除数据权限 (data:delete)' });
+        }
+
         // 先查出 database_id，用于后续清理相关数据源
         const targets = await db.query('SELECT database_id FROM notion_sync_targets WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
         if (targets.length === 0) {
@@ -211,6 +217,25 @@ router.delete('/databases/:id', authenticate, async (req, res) => {
         await db.query('DELETE FROM notion_data_sources WHERE database_id = ? AND user_id = ?', [databaseId, req.user.id]);
 
         res.json({ success: true, message: '数据库配置及其关联数据源已删除' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 更新数据库同步状态 (启用/停用)
+ * PUT /api/databases/:id/status
+ */
+router.put('/databases/:id/status', authenticate, async (req, res) => {
+    const { status } = req.body;
+    if (status === undefined) return res.status(400).json({ success: false, message: '缺少 status 参数' });
+
+    try {
+        const result = await db.query('UPDATE notion_sync_targets SET status = ? WHERE id = ? AND user_id = ?', [status ? 1 : 0, req.params.id, req.user.id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ success: false, message: '配置不存在或无权操作' });
+        }
+        res.json({ success: true, message: status ? '同步已启用' : '同步已停用' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -251,11 +276,23 @@ router.post('/databases/:databaseId/refresh-schema', authenticate, async (req, r
     const { databaseId } = req.params;
     
     try {
+        // 权限验证
+        const hasPermission = await Auth.checkPermission(req.user.id, 'sync:notion');
+        if (!hasPermission) {
+            return res.status(403).json({ success: false, message: '无同步数据权限 (sync:notion)' });
+        }
+
         // 1. 查找数据源 ID
         const dsInfo = await db.query('SELECT data_source_id, name FROM notion_data_sources WHERE database_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1', [databaseId, req.user.id]);
         
         if (dsInfo.length === 0) {
             return res.status(404).json({ success: false, message: '未找到关联的数据源，请先执行一次同步' });
+        }
+
+        // 状态验证
+        const statusCheck = await db.query('SELECT status FROM notion_sync_targets WHERE database_id = ? AND user_id = ?', [databaseId, req.user.id]);
+        if (statusCheck.length > 0 && statusCheck[0].status === 0) {
+            return res.status(403).json({ success: false, message: '该数据库链路已挂起，无法更新结构' });
         }
         
         const dataSourceId = dsInfo[0].data_source_id;
@@ -311,6 +348,15 @@ router.get('/data/:databaseId', authenticate, async (req, res) => {
     const offset = (page - 1) * limit;
     
     try {
+        // 权限与状态验证
+        const statusCheck = await db.query('SELECT status FROM notion_sync_targets WHERE database_id = ? AND user_id = ?', [databaseId, req.user.id]);
+        if (statusCheck.length === 0) {
+            return res.status(404).json({ success: false, message: '配置不存在或无权操作' });
+        }
+        if (statusCheck[0].status === 0) {
+            return res.status(403).json({ success: false, message: '该数据库链路已挂起，无法访问数据' });
+        }
+
         const dsInfo = await db.query('SELECT name FROM notion_data_sources WHERE database_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1', [databaseId, req.user.id]);
         
         let tableName;
@@ -361,7 +407,8 @@ router.get('/data/:databaseId', authenticate, async (req, res) => {
         // 获取总数
         const countSql = `SELECT COUNT(*) as total FROM \`${tableName}\` ${whereClause}`;
         const countResult = await db.query(countSql, queryParams);
-        const total = countResult[0].total;
+        // 确保 total 是数字类型，避免 BigInt 序列化问题
+        const total = Number(countResult[0].total || 0);
 
         // 获取分页数据
         const sql = `SELECT * FROM \`${tableName}\` ${whereClause} ORDER BY synced_at DESC LIMIT ? OFFSET ?`;
@@ -374,7 +421,7 @@ router.get('/data/:databaseId', authenticate, async (req, res) => {
                 total,
                 page,
                 limit,
-                totalPages: Math.ceil(total / limit)
+                totalPages: Math.ceil(total / limit) || 1
             }
         });
     } catch (error) {
@@ -535,6 +582,12 @@ router.all('/data_sources/:dataSourceId/recreate-table', authenticate, async (re
     let databaseId = req.body.databaseId || req.query.databaseId;
 
     try {
+        // 权限验证
+        const hasPermission = await Auth.checkPermission(req.user.id, 'sync:notion');
+        if (!hasPermission) {
+            return res.status(403).json({ success: false, message: '无同步数据权限 (sync:notion)' });
+        }
+
         // 如果没有提供 databaseId，尝试从数据库中查找
         if (!databaseId) {
             const dsInfo = await db.query('SELECT database_id FROM notion_data_sources WHERE data_source_id = ? AND user_id = ?', [dataSourceId, req.user.id]);
@@ -545,6 +598,12 @@ router.all('/data_sources/:dataSourceId/recreate-table', authenticate, async (re
 
         if (!databaseId) {
             return res.status(400).json({ success: false, message: '缺少 databaseId 参数，且无法通过 dataSourceId 自动关联' });
+        }
+
+        // 状态验证
+        const statusCheck = await db.query('SELECT status FROM notion_sync_targets WHERE database_id = ? AND user_id = ?', [databaseId, req.user.id]);
+        if (statusCheck.length > 0 && statusCheck[0].status === 0) {
+            return res.status(403).json({ success: false, message: '该数据库链路已挂起，无法重新创建表' });
         }
 
         const configs = await db.getAllConfigs(req.user.id);

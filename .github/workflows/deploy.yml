@@ -1,0 +1,57 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'notion-sync/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: notion-sync
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.11.1'
+          cache: 'npm'
+          cache-dependency-path: notion-sync/package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Prepare production build
+        run: |
+          mkdir -p notion-sync
+          cp -r bin lib mysql public routes views app.js package.json package-lock.json notion-sync/
+
+      - name: Deploy to Server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          source: "notion-sync/notion-sync"
+          target: "/www/web"
+          strip_components: 1
+
+      - name: Restart Backend Service
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            cd /www/web/notion-sync
+            npm install --production
+            pm2 restart notion-sync || pm2 start ./bin/www --name notion-sync
