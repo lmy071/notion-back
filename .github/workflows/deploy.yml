@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: '24.11.1'
           cache: 'npm'
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: '**/package-lock.json'
 
       - name: Install dependencies
         run: npm install
@@ -27,11 +27,11 @@ jobs:
         run: |
           npm run build
           # 在构建产物中注入生产环境配置 (从 GitHub Secrets 获取)
-          echo "DB_HOST=${{ secrets.DB_HOST }}" >> notion-sync/.env.production
-          echo "DB_USER=${{ secrets.DB_USER }}" >> notion-sync/.env.production
-          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> notion-sync/.env.production
-          echo "DB_NAME=${{ secrets.DB_NAME }}" >> notion-sync/.env.production
-          echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> notion-sync/.env.production
+          echo "DB_HOST=${{ secrets.DB_HOST }}" >> build_dist/notion-sync/.env.production
+          echo "DB_USER=${{ secrets.DB_USER }}" >> build_dist/notion-sync/.env.production
+          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> build_dist/notion-sync/.env.production
+          echo "DB_NAME=${{ secrets.DB_NAME }}" >> build_dist/notion-sync/.env.production
+          echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> build_dist/notion-sync/.env.production
 
       - name: Deploy to Server
         uses: appleboy/scp-action@v0.1.7
@@ -40,9 +40,9 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_SSH_KEY }}
           port: ${{ secrets.SERVER_PORT || 22 }}
-          source: "notion-sync"
+          source: "build_dist/notion-sync"
           target: "/www/web"
-          strip_components: 0
+          strip_components: 1
 
       - name: Restart Backend Service
         uses: appleboy/ssh-action@v1.0.3
