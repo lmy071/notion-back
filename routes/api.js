@@ -4,6 +4,36 @@ const Auth = require('../lib/auth');
 const db = require('../lib/db');
 const SyncEngine = require('../lib/sync');
 const NotionClient = require('../lib/notion');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// 配置 multer 存储
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const uploadDir = path.join(__dirname, '../public/uploads/avatars');
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'avatar-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 2 * 1024 * 1024 }, // 限制 2MB
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        } else {
+            cb(new Error('仅支持上传图片文件'));
+        }
+    }
+});
 
 /**
  * 简单的身份验证中间件
@@ -129,6 +159,24 @@ router.post('/me/profile', authenticate, async (req, res) => {
     try {
         await db.query('UPDATE users SET avatar = ? WHERE id = ?', [avatar, req.user.id]);
         res.json({ success: true, message: '个人资料已更新' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 上传头像
+ * POST /api/upload/avatar
+ */
+router.post('/upload/avatar', authenticate, upload.single('avatar'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: '没有上传文件' });
+        }
+        
+        // 返回文件的访问 URL
+        const fileUrl = `/uploads/avatars/${req.file.filename}`;
+        res.json({ success: true, data: { url: fileUrl } });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
