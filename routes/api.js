@@ -157,25 +157,34 @@ router.get('/databases', authenticate, async (req, res) => {
                     tableName = `user_${req.user.id}_notion_data_${target.database_id.replace(/-/g, '_')}`;
                 }
 
-                // 2. 直接查询总量，如果表不存在则 catch 错误
+                // 2. 检查表是否存在，如果不存在则直接设为 0，避免触发 db.query 的内部错误日志
                 let totalCount = 0;
                 try {
-                    const countResult = await db.query(`SELECT COUNT(*) as total FROM \`${tableName}\``);
-                    totalCount = Number(countResult[0].total || 0);
-                } catch (tableErr) {
-                    // 如果第一个表名查不到，尝试备用表名
-                    const fallbackTableName = `user_${req.user.id}_notion_data_${target.database_id.replace(/-/g, '_')}`;
-                    if (fallbackTableName !== tableName) {
-                        try {
-                            const countResult = await db.query(`SELECT COUNT(*) as total FROM \`${fallbackTableName}\``);
-                            totalCount = Number(countResult[0].total || 0);
-                        } catch (fallbackErr) {
-                            // 两个表都查不到，设为 0
-                            totalCount = 0;
-                        }
+                    const tableCheck = await db.query(
+                        "SELECT COUNT(*) as exists_count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+                        [tableName]
+                    );
+                    
+                    if (tableCheck[0].exists_count > 0) {
+                        const countResult = await db.query(`SELECT COUNT(*) as total FROM \`${tableName}\``);
+                        totalCount = Number(countResult[0].total || 0);
                     } else {
-                        totalCount = 0;
+                        // 如果第一个表名不存在，检查备用表名
+                        const fallbackTableName = `user_${req.user.id}_notion_data_${target.database_id.replace(/-/g, '_')}`;
+                        if (fallbackTableName !== tableName) {
+                            const fallbackCheck = await db.query(
+                                "SELECT COUNT(*) as exists_count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+                                [fallbackTableName]
+                            );
+                            if (fallbackCheck[0].exists_count > 0) {
+                                const countResult = await db.query(`SELECT COUNT(*) as total FROM \`${fallbackTableName}\``);
+                                totalCount = Number(countResult[0].total || 0);
+                            }
+                        }
                     }
+                } catch (err) {
+                    console.error(`Metadata check failed for ${target.database_id}:`, err);
+                    totalCount = 0;
                 }
 
                 return { ...target, total_count: totalCount };
