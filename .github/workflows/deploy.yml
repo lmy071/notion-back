@@ -24,7 +24,14 @@ jobs:
         run: npm install
 
       - name: Build project
-        run: npm run build
+        run: |
+          npm run build
+          # 在构建产物中注入生产环境配置 (从 GitHub Secrets 获取)
+          echo "DB_HOST=${{ secrets.DB_HOST }}" >> notion-sync/.env.production
+          echo "DB_USER=${{ secrets.DB_USER }}" >> notion-sync/.env.production
+          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> notion-sync/.env.production
+          echo "DB_NAME=${{ secrets.DB_NAME }}" >> notion-sync/.env.production
+          echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> notion-sync/.env.production
 
       - name: Deploy to Server
         uses: appleboy/scp-action@v0.1.7
