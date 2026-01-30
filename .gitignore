@@ -8,3 +8,4 @@ logs
 .env.pruduction
 .env.dev
 errorLogs
+notion-sync

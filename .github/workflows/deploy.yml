@@ -3,7 +3,7 @@ name: Deploy Backend
 on:
   push:
     branches:
-      - master
+      - main
 
 jobs:
   deploy:
@@ -23,10 +23,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Prepare production build
-        run: |
-          mkdir -p notion-sync
-          cp -r bin lib mysql public routes views app.js package.json package-lock.json notion-sync/
+      - name: Build project
+        run: npm run build
 
       - name: Deploy to Server
         uses: appleboy/scp-action@v0.1.7
