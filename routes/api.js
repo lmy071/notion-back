@@ -104,15 +104,48 @@ router.get('/configs', authenticate, async (req, res) => {
 });
 
 /**
+ * 获取当前用户信息
+ * GET /api/me
+ */
+router.get('/me', authenticate, async (req, res) => {
+    try {
+        const users = await db.query('SELECT id, username, role, created_at FROM users WHERE id = ?', [req.user.id]);
+        if (users.length > 0) {
+            res.json({ success: true, data: users[0] });
+        } else {
+            res.status(404).json({ success: false, message: '用户不存在' });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
  * 配置 Notion API 密钥等全局信息
  * POST /api/config
  */
 router.post('/config', authenticate, async (req, res) => {
-    const { apiKey, version } = req.body;
+    const { apiKey, version, syncSchedule } = req.body;
     
     try {
-        if (apiKey) await db.updateConfig(req.user.id, 'notion_api_key', apiKey);
-        if (version) await db.updateConfig(req.user.id, 'notion_version', version);
+        if (apiKey !== undefined) await db.updateConfig(req.user.id, 'notion_api_key', apiKey);
+        if (version !== undefined) await db.updateConfig(req.user.id, 'notion_version', version);
+        
+        if (syncSchedule !== undefined) {
+            // 验证 cron 表达式
+            const cron = require('node-cron');
+            const scheduler = require('../lib/scheduler');
+            
+            if (syncSchedule === '' || syncSchedule === null) {
+                await db.updateConfig(req.user.id, 'sync_schedule', '');
+                scheduler.stopSync(req.user.id);
+            } else if (cron.validate(syncSchedule)) {
+                await db.updateConfig(req.user.id, 'sync_schedule', syncSchedule);
+                scheduler.scheduleSync(req.user.id, syncSchedule);
+            } else {
+                return res.status(400).json({ success: false, message: '无效的 Cron 表达式' });
+            }
+        }
 
         res.json({ success: true, message: '配置已更新' });
     } catch (error) {

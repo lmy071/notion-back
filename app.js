@@ -5,6 +5,10 @@ var path = require('path');
 var cookieParser = require('cookie-parser');
 var logger = require('morgan');
 const { apiResponseInterceptor, errorLoggerMiddleware } = require('./lib/errorLogger');
+const scheduler = require('./lib/scheduler');
+
+// 初始化定时任务
+scheduler.init();
 
 var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');

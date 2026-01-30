@@ -19,6 +19,7 @@
     "http-errors": "~1.6.3",
     "morgan": "~1.9.1",
     "mysql2": "^3.16.2",
+    "node-cron": "^4.2.1",
     "pinyin-pro": "^3.28.0",
     "pug": "2.0.0-beta11"
   }
