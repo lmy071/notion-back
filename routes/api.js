@@ -109,12 +109,26 @@ router.get('/configs', authenticate, async (req, res) => {
  */
 router.get('/me', authenticate, async (req, res) => {
     try {
-        const users = await db.query('SELECT id, username, role, created_at FROM users WHERE id = ?', [req.user.id]);
+        const users = await db.query('SELECT id, username, role, avatar, created_at FROM users WHERE id = ?', [req.user.id]);
         if (users.length > 0) {
             res.json({ success: true, data: users[0] });
         } else {
             res.status(404).json({ success: false, message: '用户不存在' });
         }
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 更新个人资料 (头像等)
+ * POST /api/me/profile
+ */
+router.post('/me/profile', authenticate, async (req, res) => {
+    const { avatar } = req.body;
+    try {
+        await db.query('UPDATE users SET avatar = ? WHERE id = ?', [avatar, req.user.id]);
+        res.json({ success: true, message: '个人资料已更新' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
