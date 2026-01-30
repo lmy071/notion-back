@@ -1,7 +1,6 @@
 .history
 .idea
 node_modules
-package-lock.json
 dist
 .env.*
 logs
