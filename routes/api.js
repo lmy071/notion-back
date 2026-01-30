@@ -534,23 +534,14 @@ router.get('/data/:databaseId', authenticate, async (req, res) => {
 });
 
 /**
- * 获取并存储 Notion 页面详情 (Blocks)
+ * 获取存储在数据库中的 Notion 页面详情 (仅从 DB 读取)
  * GET /api/data/:databaseId/page/:pageId
  */
 router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
     const { databaseId, pageId } = req.params;
     
     try {
-        // 1. 获取基础配置
-        const configs = await db.getAllConfigs(req.user.id);
-        const apiKey = configs.notion_api_key;
-        const notionVersion = configs.notion_version || '2025-09-03';
-
-        if (!apiKey) {
-            return res.status(400).json({ success: false, message: '未配置 Notion API Key' });
-        }
-
-        // 2. 获取数据源名称以生成表名
+        // 1. 获取数据源名称以生成表名
         const dsInfo = await db.query('SELECT name FROM notion_data_sources WHERE database_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1', [databaseId, req.user.id]);
         
         let baseTableName;
@@ -560,10 +551,80 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
             baseTableName = `user_${req.user.id}_notion_data_${databaseId.replace(/-/g, '_')}`;
         }
         
-        // 生成详情表名: xxx_detail_userId
         const detailTableName = baseTableName.replace(`_${req.user.id}`, `_detail_${req.user.id}`);
 
-        // 3. 确保详情表存在
+        // 2. 检查表是否存在
+        const checkTableSql = `SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = ? AND table_schema = DATABASE()`;
+        const tableExists = await db.query(checkTableSql, [detailTableName]);
+        
+        if (tableExists[0].count === 0) {
+            return res.json({ success: true, data: [], synced: false, message: '该页面尚未同步，请先执行同步' });
+        }
+
+        // 3. 从数据库查询所有 Block
+        const rows = await db.query(`SELECT * FROM \`${detailTableName}\` WHERE page_id = ?`, [pageId]);
+        
+        if (rows.length === 0) {
+            return res.json({ success: true, data: [], synced: false, message: '该页面尚未同步，请先执行同步' });
+        }
+
+        // 4. 重建树形结构
+        const buildTree = (parentId) => {
+            return rows
+                .filter(row => row.parent_id === parentId)
+                .map(row => {
+                    const content = JSON.parse(row.content);
+                    return {
+                        ...content,
+                        children: buildTree(row.block_id)
+                    };
+                });
+        };
+
+        const blocks = buildTree(pageId);
+
+        res.json({ 
+            success: true, 
+            data: blocks,
+            synced: true,
+            tableName: detailTableName
+        });
+    } catch (error) {
+        console.error('Fetch page detail from DB error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 同步 Notion 页面详情到数据库
+ * POST /api/data/:databaseId/page/:pageId/sync
+ */
+router.post('/data/:databaseId/page/:pageId/sync', authenticate, async (req, res) => {
+    const { databaseId, pageId } = req.params;
+    
+    try {
+        // 1. 获取配置
+        const configs = await db.getAllConfigs(req.user.id);
+        const apiKey = configs.notion_api_key;
+        const notionVersion = configs.notion_version || '2025-09-03';
+
+        if (!apiKey) {
+            return res.status(400).json({ success: false, message: '未配置 Notion API Key' });
+        }
+
+        // 2. 获取表名
+        const dsInfo = await db.query('SELECT name FROM notion_data_sources WHERE database_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1', [databaseId, req.user.id]);
+        
+        let baseTableName;
+        if (dsInfo.length > 0 && dsInfo[0].name) {
+            baseTableName = NotionClient.generateTableName(req.user.id, dsInfo[0].name);
+        } else {
+            baseTableName = `user_${req.user.id}_notion_data_${databaseId.replace(/-/g, '_')}`;
+        }
+        
+        const detailTableName = baseTableName.replace(`_${req.user.id}`, `_detail_${req.user.id}`);
+
+        // 3. 确保表存在
         const createTableSql = `
             CREATE TABLE IF NOT EXISTS \`${detailTableName}\` (
                 \`id\` INT AUTO_INCREMENT PRIMARY KEY,
@@ -578,11 +639,11 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
         `;
         await db.query(createTableSql);
 
-        // 4. 从 Notion 获取数据
+        // 4. 从 Notion 递归获取
         const notion = new NotionClient(req.user.id, apiKey, notionVersion);
         const blocks = await notion.getPageBlocksRecursive(pageId);
 
-        // 5. 存储到数据库 (简单起见，先删除旧的再插入新的)
+        // 5. 存储到 DB
         await db.query(`DELETE FROM \`${detailTableName}\` WHERE page_id = ?`, [pageId]);
         
         const flattenBlocks = (blockList, parentId = pageId) => {
@@ -605,6 +666,7 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
 
         const flatData = flattenBlocks(blocks);
         
+        // 批量插入优化
         for (const item of flatData) {
             await db.query(
                 `INSERT INTO \`${detailTableName}\` (page_id, block_id, type, content, parent_id) VALUES (?, ?, ?, ?, ?)`,
@@ -614,11 +676,11 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
 
         res.json({ 
             success: true, 
-            data: blocks,
-            tableName: detailTableName
+            message: '同步完成',
+            count: flatData.length
         });
     } catch (error) {
-        console.error('Fetch page detail error:', error);
+        console.error('Sync page detail error:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
