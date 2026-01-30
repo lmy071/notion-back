@@ -143,7 +143,49 @@ router.post('/databases', authenticate, async (req, res) => {
 router.get('/databases', authenticate, async (req, res) => {
     try {
         const targets = await db.query('SELECT * FROM notion_sync_targets WHERE user_id = ?', [req.user.id]);
-        res.json({ success: true, data: targets });
+        
+        // 为每个数据库目标获取实时数据总量
+        const dataWithCounts = await Promise.all(targets.map(async (target) => {
+            try {
+                // 1. 确定表名 (优先使用数据源名称，回退到数据库ID命名)
+                const dsInfo = await db.query('SELECT name FROM notion_data_sources WHERE database_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1', [target.database_id, req.user.id]);
+                
+                let tableName;
+                if (dsInfo.length > 0 && dsInfo[0].name) {
+                    tableName = NotionClient.generateTableName(req.user.id, dsInfo[0].name);
+                } else {
+                    tableName = `user_${req.user.id}_notion_data_${target.database_id.replace(/-/g, '_')}`;
+                }
+
+                // 2. 直接查询总量，如果表不存在则 catch 错误
+                let totalCount = 0;
+                try {
+                    const countResult = await db.query(`SELECT COUNT(*) as total FROM \`${tableName}\``);
+                    totalCount = countResult[0].total;
+                } catch (tableErr) {
+                    // 如果第一个表名查不到，尝试备用表名
+                    const fallbackTableName = `user_${req.user.id}_notion_data_${target.database_id.replace(/-/g, '_')}`;
+                    if (fallbackTableName !== tableName) {
+                        try {
+                            const countResult = await db.query(`SELECT COUNT(*) as total FROM \`${fallbackTableName}\``);
+                            totalCount = countResult[0].total;
+                        } catch (fallbackErr) {
+                            // 两个表都查不到，设为 0
+                            totalCount = 0;
+                        }
+                    } else {
+                        totalCount = 0;
+                    }
+                }
+
+                return { ...target, total_count: totalCount };
+            } catch (err) {
+                console.error(`Failed to get count for ${target.database_id}:`, err);
+                return { ...target, total_count: 0 };
+            }
+        }));
+
+        res.json({ success: true, data: dataWithCounts });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -155,12 +197,20 @@ router.get('/databases', authenticate, async (req, res) => {
  */
 router.delete('/databases/:id', authenticate, async (req, res) => {
     try {
-        // 增加 user_id 校验，防止越权删除
-        const result = await db.query('DELETE FROM notion_sync_targets WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
-        if (result.affectedRows === 0) {
+        // 先查出 database_id，用于后续清理相关数据源
+        const targets = await db.query('SELECT database_id FROM notion_sync_targets WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+        if (targets.length === 0) {
             return res.status(404).json({ success: false, message: '配置不存在或无权操作' });
         }
-        res.json({ success: true, message: '数据库配置已删除' });
+        const databaseId = targets[0].database_id;
+
+        // 1. 删除同步目标配置
+        await db.query('DELETE FROM notion_sync_targets WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+        
+        // 2. 删除该数据库关联的所有数据源记录
+        await db.query('DELETE FROM notion_data_sources WHERE database_id = ? AND user_id = ?', [databaseId, req.user.id]);
+
+        res.json({ success: true, message: '数据库配置及其关联数据源已删除' });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -194,36 +244,139 @@ router.post('/sync/:databaseId', authenticate, async (req, res) => {
 });
 
 /**
- * 查询特定同步数据库里的数据
- * GET /api/data/:databaseId
+ * 更新数据库表字段 (从 Notion 同步结构)
+ * POST /api/databases/:databaseId/refresh-schema
  */
-router.get('/data/:databaseId', authenticate, async (req, res) => {
+router.post('/databases/:databaseId/refresh-schema', authenticate, async (req, res) => {
     const { databaseId } = req.params;
     
     try {
-        // 先根据 database_id 找到对应的数据源名称（用于生成表名）
+        // 1. 查找数据源 ID
+        const dsInfo = await db.query('SELECT data_source_id, name FROM notion_data_sources WHERE database_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1', [databaseId, req.user.id]);
+        
+        if (dsInfo.length === 0) {
+            return res.status(404).json({ success: false, message: '未找到关联的数据源，请先执行一次同步' });
+        }
+        
+        const dataSourceId = dsInfo[0].data_source_id;
+        const dsName = dsInfo[0].name;
+
+        // 2. 获取 Notion 配置
+        const configs = await db.getAllConfigs(req.user.id);
+        const apiKey = configs.notion_api_key;
+        const notionVersion = configs.notion_version || '2025-09-03';
+
+        if (!apiKey) {
+            return res.status(400).json({ success: false, message: '未配置 Notion API Key' });
+        }
+
+        const notion = new NotionClient(req.user.id, apiKey, notionVersion);
+        
+        // 3. 获取最新结构
+        const structure = await notion.getDataSourceStructure(dataSourceId);
+        const properties = structure.properties;
+        const dsTitle = structure.title || dsName || 'notion_data';
+
+        // 4. 映射字段
+        const tableName = NotionClient.generateTableName(req.user.id, dsTitle);
+        const { columns } = notion.mapNotionToMysql(properties);
+
+        // 5. 更新表结构 (简单起见，使用先删后建模式，后续可优化为 ALTER TABLE)
+        await db.query(`DROP TABLE IF EXISTS \`${tableName}\``);
+        
+        const createTableSql = `CREATE TABLE \`${tableName}\` (
+            ${columns.join(', ')},
+            \`synced_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`;
+        
+        await db.query(createTableSql);
+
+        res.json({ success: true, message: `表 ${tableName} 字段已成功更新` });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 查询特定同步数据库里的数据
+ * GET /api/data/:databaseId
+ * 支持分页参数: page, limit, search, filters (JSON string)
+ */
+router.get('/data/:databaseId', authenticate, async (req, res) => {
+    const { databaseId } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const search = req.query.search || '';
+    const filtersStr = req.query.filters || '[]';
+    const offset = (page - 1) * limit;
+    
+    try {
         const dsInfo = await db.query('SELECT name FROM notion_data_sources WHERE database_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1', [databaseId, req.user.id]);
         
         let tableName;
         if (dsInfo.length > 0 && dsInfo[0].name) {
             tableName = NotionClient.generateTableName(req.user.id, dsInfo[0].name);
         } else {
-            // 回退到旧的命名方式
             tableName = `user_${req.user.id}_notion_data_${databaseId.replace(/-/g, '_')}`;
         }
         
-        // 先检查表是否存在，限定在当前数据库内
         const checkTableSql = `SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = ? AND table_schema = DATABASE()`;
         const tableExists = await db.query(checkTableSql, [tableName]);
         
         if (tableExists[0].count === 0) {
-            console.log(`[Data Query] Table not found: ${tableName}`);
             return res.status(404).json({ success: false, message: '该数据库尚未同步或对应的 MySQL 表不存在' });
         }
 
-        const sql = `SELECT * FROM \`${tableName}\` ORDER BY synced_at DESC`;
-        const data = await db.query(sql);
-        res.json({ success: true, count: data.length, data });
+        // 构建查询条件
+        let whereClause = '';
+        let queryParams = [];
+
+        // 1. 获取表字段信息，用于安全搜索
+        const columnsInfo = await db.query(`SHOW COLUMNS FROM \`${tableName}\``);
+        const validColumns = columnsInfo.map(c => c.Field);
+
+        // 2. 处理全局搜索
+        if (search) {
+            const searchConditions = validColumns.map(col => `\`${col}\` LIKE ?`).join(' OR ');
+            whereClause += ` WHERE (${searchConditions})`;
+            validColumns.forEach(() => queryParams.push(`%${search}%`));
+        }
+
+        // 3. 处理高级过滤
+        try {
+            const advancedFilters = JSON.parse(filtersStr);
+            if (Array.isArray(advancedFilters) && advancedFilters.length > 0) {
+                advancedFilters.forEach(f => {
+                    if (f.field && f.value && validColumns.includes(f.field)) {
+                        whereClause += whereClause ? ' AND ' : ' WHERE ';
+                        whereClause += `\`${f.field}\` LIKE ?`;
+                        queryParams.push(`%${f.value}%`);
+                    }
+                });
+            }
+        } catch (e) {
+            console.error('Parse filters error:', e);
+        }
+
+        // 获取总数
+        const countSql = `SELECT COUNT(*) as total FROM \`${tableName}\` ${whereClause}`;
+        const countResult = await db.query(countSql, queryParams);
+        const total = countResult[0].total;
+
+        // 获取分页数据
+        const sql = `SELECT * FROM \`${tableName}\` ${whereClause} ORDER BY synced_at DESC LIMIT ? OFFSET ?`;
+        const data = await db.query(sql, [...queryParams, limit, offset]);
+        
+        res.json({ 
+            success: true, 
+            data,
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages: Math.ceil(total / limit)
+            }
+        });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
