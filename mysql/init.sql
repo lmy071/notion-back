@@ -81,3 +81,18 @@ INSERT IGNORE INTO `dict_table` (`dict_code`, `dict_name`, `category`) VALUES
 -- 初始化默认管理员 (密码: admin123)
 INSERT IGNORE INTO `users` (`username`, `password`, `permissions`, `role`) VALUES 
 ('admin', 'admin123', 'sync:notion,data:delete,user:manage,config:manage', 'admin');
+
+-- 页面分享配置表
+CREATE TABLE IF NOT EXISTS `shares` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT NOT NULL COMMENT '所属用户 ID',
+    `object_id` VARCHAR(64) NOT NULL COMMENT 'Notion 页面或数据库 ID',
+    `share_token` VARCHAR(64) NOT NULL UNIQUE COMMENT '分享令牌',
+    `is_active` TINYINT(1) DEFAULT 1 COMMENT '是否启用分享: 1启用, 0禁用',
+    `config` JSON COMMENT '分享配置(过期时间、密码等)',
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_object_id` (`object_id`),
+    INDEX `idx_share_token` (`share_token`),
+    FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='页面分享配置表';

@@ -7,6 +7,7 @@ const NotionClient = require('../lib/notion');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // 配置 multer 存储
 const storage = multer.diskStorage({
@@ -1238,6 +1239,128 @@ router.post('/monitoring', async (req, res) => {
     } catch (error) {
         console.error('Monitoring report error:', error);
         // 监控接口即使失败也不应影响主流程，但返回错误码
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 获取页面的分享配置
+ * GET /api/shares/:objectId
+ */
+router.get('/shares/:objectId', authenticate, async (req, res) => {
+    const { objectId } = req.params;
+    try {
+        const rows = await db.query('SELECT * FROM shares WHERE object_id = ? AND user_id = ?', [objectId, req.user.id]);
+        if (rows.length === 0) {
+            return res.json({ success: true, data: null });
+        }
+        res.json({ success: true, data: rows[0] });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 创建或更新页面的分享配置
+ * POST /api/shares/:objectId
+ */
+router.post('/shares/:objectId', authenticate, async (req, res) => {
+    const { objectId } = req.params;
+    const { is_active } = req.body;
+    
+    try {
+        // 检查是否已存在
+        const existing = await db.query('SELECT id, share_token FROM shares WHERE object_id = ? AND user_id = ?', [objectId, req.user.id]);
+        
+        if (existing.length > 0) {
+            // 更新状态
+            await db.query('UPDATE shares SET is_active = ? WHERE id = ?', [is_active ? 1 : 0, existing[0].id]);
+            const updated = await db.query('SELECT * FROM shares WHERE id = ?', [existing[0].id]);
+            return res.json({ success: true, data: updated[0] });
+        } else {
+            // 创建新分享
+            const shareToken = crypto.randomBytes(32).toString('hex');
+            await db.query(
+                'INSERT INTO shares (user_id, object_id, share_token, is_active) VALUES (?, ?, ?, ?)',
+                [req.user.id, objectId, shareToken, is_active ? 1 : 0]
+            );
+            const created = await db.query('SELECT * FROM shares WHERE share_token = ?', [shareToken]);
+            return res.json({ success: true, data: created[0] });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 公共接口：根据 share_token 获取页面内容
+ * GET /api/public/shares/:token
+ */
+router.get('/public/shares/:token', async (req, res) => {
+    const { token } = req.params;
+    try {
+        // 1. 查找分享配置
+        const shareRows = await db.query('SELECT * FROM shares WHERE share_token = ? AND is_active = 1', [token]);
+        if (shareRows.length === 0) {
+            return res.status(404).json({ success: false, message: '分享不存在或已关闭' });
+        }
+        
+        const share = shareRows[0];
+        const { user_id, object_id } = share;
+        
+        // 2. 确定数据表名 (工作区详情表)
+        const detailTableName = `user_${user_id}_workspace_details`;
+        
+        // 3. 检查表是否存在
+        const checkTableSql = `SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = ? AND table_schema = DATABASE()`;
+        const tableExists = await db.query(checkTableSql, [detailTableName]);
+        
+        if (tableExists[0].count === 0) {
+            return res.status(404).json({ success: false, message: '内容尚未同步，请联系分享者' });
+        }
+
+        // 4. 获取内容并构建树
+        const normalizeId = (id) => id.replace(/-/g, '').toLowerCase();
+        const normalizedObjectId = normalizeId(object_id);
+        
+        const rows = await db.query(`SELECT * FROM \`${detailTableName}\` WHERE page_id = ? OR REPLACE(page_id, '-', '') = ?`, [object_id, normalizedObjectId]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ success: false, message: '页面内容为空或未同步' });
+        }
+
+        const buildTree = (parentId) => {
+            const normalizedParentId = normalizeId(parentId);
+            return rows
+                .filter(row => normalizeId(row.parent_id) === normalizedParentId)
+                .map(row => {
+                    let content;
+                    try {
+                        content = typeof row.content === 'string' ? JSON.parse(row.content) : row.content;
+                    } catch (e) {
+                        content = row.content;
+                    }
+                    return {
+                        ...content,
+                        children: buildTree(row.block_id)
+                    };
+                });
+        };
+
+        const blocks = buildTree(object_id);
+        
+        // 获取页面标题 (从 workspace_objects 表获取)
+        const objectRows = await db.query(`SELECT title FROM user_${user_id}_workspace_objects WHERE object_id = ?`, [object_id]);
+        const title = objectRows.length > 0 ? objectRows[0].title : '分享页面';
+
+        res.json({ 
+            success: true, 
+            data: {
+                title,
+                blocks
+            }
+        });
+    } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
 });
