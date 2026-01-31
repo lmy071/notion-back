@@ -3,7 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "start": "cross-env NODE_ENV=development node ./bin/www",
+    "start": "cross-env NODE_ENV=development nodemon ./bin/www",
+    "dev": "cross-env NODE_ENV=development nodemon ./bin/www",
     "serve": "cross-env NODE_ENV=production node ./bin/www",
     "build": "rm -rf build_dist && mkdir -p build_dist/notion-sync && cp -r bin lib mysql public routes views app.js package.json package-lock.json build_dist/notion-sync/",
     "auto-commit": "node scripts/auto-commit.js"
@@ -23,5 +24,8 @@
     "node-cron": "^4.2.1",
     "pinyin-pro": "^3.28.0",
     "pug": "2.0.0-beta11"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
   }
 }
