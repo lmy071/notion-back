@@ -922,6 +922,146 @@ router.get('/config', authenticate, async (req, res) => {
 });
 
 /**
+ * 搜索 Notion 页面
+ * GET /api/notion/search
+ */
+router.get('/notion/search', authenticate, async (req, res) => {
+    const { query, cursor, pageSize } = req.query;
+    try {
+        const configs = await db.getAllConfigs(req.user.id);
+        const apiKey = configs.notion_api_key;
+        const notionVersion = configs.notion_version || '2025-09-03';
+
+        if (!apiKey) {
+            return res.status(400).json({ success: false, message: '未配置 Notion API Key' });
+        }
+
+        const notion = new NotionClient(req.user.id, apiKey, notionVersion);
+        const result = await notion.search(query, cursor, pageSize ? parseInt(pageSize) : 100);
+        res.json({ success: true, data: result });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 获取工作区页面详情 (通用，不依赖特定 databaseId)
+ * GET /api/notion/page/:pageId
+ */
+router.get('/notion/page/:pageId', authenticate, async (req, res) => {
+    const { pageId } = req.params;
+    const normalizeId = (id) => id.replace(/-/g, '').toLowerCase();
+    const normalizedPageId = normalizeId(pageId);
+    const detailTableName = `user_${req.user.id}_workspace_details`;
+
+    try {
+        const checkTableSql = `SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = ? AND table_schema = DATABASE()`;
+        const tableExists = await db.query(checkTableSql, [detailTableName]);
+        
+        if (tableExists[0].count === 0) {
+            return res.json({ success: true, data: [], synced: false, message: '该页面尚未同步' });
+        }
+
+        const rows = await db.query(`SELECT * FROM \`${detailTableName}\` WHERE page_id = ? OR REPLACE(page_id, '-', '') = ?`, [pageId, normalizedPageId]);
+        
+        if (rows.length === 0) {
+            return res.json({ success: true, data: [], synced: false, message: '该页面尚未同步' });
+        }
+
+        const buildTree = (parentId) => {
+            const normalizedParentId = normalizeId(parentId);
+            return rows
+                .filter(row => normalizeId(row.parent_id) === normalizedParentId)
+                .map(row => {
+                    let content;
+                    try {
+                        content = typeof row.content === 'string' ? JSON.parse(row.content) : row.content;
+                    } catch (e) {
+                        content = row.content;
+                    }
+                    return {
+                        ...content,
+                        children: buildTree(row.block_id)
+                    };
+                });
+        };
+
+        const blocks = buildTree(pageId);
+        res.json({ success: true, data: blocks, synced: true });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 同步工作区页面详情
+ * POST /api/notion/page/:pageId/sync
+ */
+router.post('/notion/page/:pageId/sync', authenticate, async (req, res) => {
+    const { pageId } = req.params;
+    const detailTableName = `user_${req.user.id}_workspace_details`;
+
+    try {
+        const configs = await db.getAllConfigs(req.user.id);
+        const apiKey = configs.notion_api_key;
+        const notionVersion = configs.notion_version || '2025-09-03';
+
+        if (!apiKey) {
+            return res.status(400).json({ success: false, message: '未配置 Notion API Key' });
+        }
+
+        const createTableSql = `
+            CREATE TABLE IF NOT EXISTS \`${detailTableName}\` (
+                \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+                \`page_id\` VARCHAR(64) NOT NULL,
+                \`block_id\` VARCHAR(64) NOT NULL,
+                \`type\` VARCHAR(50),
+                \`content\` JSON,
+                \`parent_id\` VARCHAR(64),
+                \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_page_id (\`page_id\`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        `;
+        await db.query(createTableSql);
+
+        const notion = new NotionClient(req.user.id, apiKey, notionVersion);
+        const blocks = await notion.getPageBlocksRecursive(pageId);
+
+        await db.query(`DELETE FROM \`${detailTableName}\` WHERE page_id = ?`, [pageId]);
+        
+        const flattenBlocks = (blockList, parentId = pageId) => {
+            let result = [];
+            for (const block of blockList) {
+                const { children, ...blockData } = block;
+                result.push({
+                    page_id: pageId,
+                    block_id: block.id,
+                    type: block.type,
+                    content: JSON.stringify(blockData),
+                    parent_id: parentId
+                });
+                if (children && children.length > 0) {
+                    result = result.concat(flattenBlocks(children, block.id));
+                }
+            }
+            return result;
+        };
+
+        const flatData = flattenBlocks(blocks);
+        for (const item of flatData) {
+            await db.query(
+                `INSERT INTO \`${detailTableName}\` (page_id, block_id, type, content, parent_id) VALUES (?, ?, ?, ?, ?)`,
+                [item.page_id, item.block_id, item.type, item.content, item.parent_id]
+            );
+        }
+
+        res.json({ success: true, message: '同步完成', count: flatData.length });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
  * 上报监控数据 (性能与错误)
  * POST /api/monitoring
  */
