@@ -20,7 +20,16 @@ function autoCommit() {
   }
 
   // 获取提交信息，如果没有提供则使用默认信息
-  const commitMessage = process.argv[2] || `Auto-commit: ${new Date().toISOString()}`;
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+  const formattedTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  
+  const commitMessage = process.argv[2] || `Auto-commit: ${formattedTime}`;
 
   console.log('Changes detected. Starting auto-commit process...');
 
