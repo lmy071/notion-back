@@ -922,6 +922,150 @@ router.get('/config', authenticate, async (req, res) => {
 });
 
 /**
+ * 同步整个 Notion 工作区的页面和数据库列表到数据库
+ * POST /api/notion/workspace/sync
+ */
+router.post('/notion/workspace/sync', authenticate, async (req, res) => {
+    try {
+        const configs = await db.getAllConfigs(req.user.id);
+        const apiKey = configs.notion_api_key;
+        const notionVersion = configs.notion_version || '2025-09-03';
+
+        if (!apiKey) {
+            return res.status(400).json({ success: false, message: '未配置 Notion API Key' });
+        }
+
+        const notion = new NotionClient(req.user.id, apiKey, notionVersion);
+        
+        // 1. 创建表
+        const tableName = `user_${req.user.id}_workspace_objects`;
+        const createTableSql = `
+            CREATE TABLE IF NOT EXISTS \`${tableName}\` (
+                \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+                \`object_id\` VARCHAR(64) NOT NULL,
+                \`type\` VARCHAR(20) NOT NULL,
+                \`title\` TEXT,
+                \`icon\` JSON,
+                \`last_edited_time\` DATETIME,
+                \`url\` TEXT,
+                \`raw_data\` JSON,
+                \`synced_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY \`idx_object_id\` (\`object_id\`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        `;
+        await db.query(createTableSql);
+
+        // 2. 递归获取所有搜索结果 (Notion /search 支持分页)
+        let allResults = [];
+        let hasMore = true;
+        let cursor = undefined;
+
+        while (hasMore) {
+            const response = await notion.search('', cursor, 100);
+            allResults = allResults.concat(response.results);
+            hasMore = response.has_more;
+            cursor = response.next_cursor;
+        }
+
+        // 3. 写入数据库
+        for (const item of allResults) {
+            let title = '未命名';
+            if (item.object === 'database') {
+                title = item.title?.[0]?.plain_text || '未命名数据库';
+            } else {
+                const titleProp = item.properties?.title || item.properties?.Name;
+                title = titleProp?.title?.[0]?.plain_text || '未命名页面';
+            }
+
+            await db.query(
+                `INSERT INTO \`${tableName}\` (object_id, type, title, icon, last_edited_time, url, raw_data) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?) 
+                 ON DUPLICATE KEY UPDATE 
+                    type = VALUES(type), 
+                    title = VALUES(title), 
+                    icon = VALUES(icon), 
+                    last_edited_time = VALUES(last_edited_time), 
+                    url = VALUES(url), 
+                    raw_data = VALUES(raw_data)`,
+                [
+                    item.id,
+                    item.object,
+                    title,
+                    JSON.stringify(item.icon || null),
+                    new Date(item.last_edited_time),
+                    item.url,
+                    JSON.stringify(item)
+                ]
+            );
+        }
+
+        res.json({ success: true, message: '工作区列表同步完成', count: allResults.length });
+    } catch (error) {
+        console.error('Workspace sync error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 从数据库获取工作区对象列表
+ * GET /api/notion/workspace/list
+ */
+router.get('/notion/workspace/list', authenticate, async (req, res) => {
+    const { query = '', type } = req.query;
+    const tableName = `user_${req.user.id}_workspace_objects`;
+
+    try {
+        // 检查表是否存在
+        const checkTableSql = `SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = ? AND table_schema = DATABASE()`;
+        const tableExists = await db.query(checkTableSql, [tableName]);
+        
+        if (tableExists[0].count === 0) {
+            return res.json({ success: true, data: [], synced: false, message: '尚未同步，请先执行同步' });
+        }
+
+        let sql = `SELECT * FROM \`${tableName}\` WHERE 1=1`;
+        const params = [];
+
+        if (query) {
+            sql += ` AND title LIKE ?`;
+            params.push(`%${query}%`);
+        }
+
+        if (type) {
+            sql += ` AND type = ?`;
+            params.push(type);
+        }
+
+        sql += ` ORDER BY last_edited_time DESC`;
+
+        const rows = await db.query(sql, params);
+        
+        // 格式化返回数据，使其结构与 Notion API 保持一致或前端兼容
+        const results = rows.map(row => {
+            let icon = null;
+            let rawData = {};
+            try {
+                icon = typeof row.icon === 'string' ? JSON.parse(row.icon) : row.icon;
+                rawData = typeof row.raw_data === 'string' ? JSON.parse(row.raw_data) : row.raw_data;
+            } catch (e) {}
+
+            return {
+                ...rawData,
+                id: row.object_id,
+                object: row.type,
+                title_from_db: row.title,
+                icon: icon,
+                last_edited_time: row.last_edited_time
+            };
+        });
+
+        res.json({ success: true, data: { results }, synced: true });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
  * 搜索 Notion 页面
  * GET /api/notion/search
  */
