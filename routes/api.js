@@ -1141,6 +1141,9 @@ router.get('/notion/workspace/list', authenticate, async (req, res) => {
         let sql = `SELECT * FROM \`${tableName}\` WHERE 1=1`;
         const params = [];
 
+        // 默认过滤掉未命名的页面和数据库
+        sql += ` AND title NOT IN ('未命名页面', '未命名数据库', '未命名')`;
+
         if (query) {
             sql += ` AND title LIKE ?`;
             params.push(`%${query}%`);
