@@ -54,6 +54,57 @@ const authenticate = async (req, res, next) => {
 };
 
 /**
+ * 从本地数据库获取层级面包屑 (避免调用 Notion API)
+ */
+const getBreadcrumbsFromDb = async (userId, objectId) => {
+    const breadcrumbs = [];
+    const workspaceTableName = `user_${userId}_workspace_objects`;
+    const normalizeId = (id) => id.replace(/-/g, '').toLowerCase();
+    
+    let currentId = objectId;
+    
+    try {
+        // 检查表是否存在
+        const checkTableSql = `SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = ? AND table_schema = DATABASE()`;
+        const tableExists = await db.query(checkTableSql, [workspaceTableName]);
+        if (tableExists[0].count === 0) return [];
+
+        // 限制深度防止循环
+        for (let i = 0; i < 5; i++) {
+            const rows = await db.query(
+                `SELECT object_id, type, title, raw_data FROM \`${workspaceTableName}\` 
+                 WHERE object_id = ? OR REPLACE(object_id, '-', '') = ?`, 
+                [currentId, normalizeId(currentId)]
+            );
+            
+            if (rows.length === 0) break;
+            
+            const item = rows[0];
+            breadcrumbs.unshift({
+                id: item.object_id,
+                type: item.type,
+                title: item.title
+            });
+            
+            // 解析 parent
+            let rawData = typeof item.raw_data === 'string' ? JSON.parse(item.raw_data) : item.raw_data;
+            const parent = rawData?.parent;
+            
+            if (parent && parent.type === 'page_id') {
+                currentId = parent.page_id;
+            } else if (parent && parent.type === 'database_id') {
+                currentId = parent.database_id;
+            } else {
+                break;
+            }
+        }
+    } catch (e) {
+        console.error('Local breadcrumbs error:', e);
+    }
+    return breadcrumbs;
+};
+
+/**
  * 管理员权限验证中间件
  */
 const isAdmin = (req, res, next) => {
@@ -577,7 +628,26 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
         const rows = await db.query(`SELECT * FROM \`${detailTableName}\` WHERE page_id = ? OR REPLACE(page_id, '-', '') = ?`, [pageId, normalizedPageId]);
         
         if (rows.length === 0) {
-            return res.json({ success: true, data: [], synced: false, message: '该页面尚未同步，请先执行同步' });
+            // 即使未同步内容，也尝试获取标题和面包屑用于显示
+            let title = '页面详情分析';
+            let breadcrumbs = [];
+            try {
+                const workspaceTableName = `user_${req.user.id}_workspace_objects`;
+                const objectRows = await db.query(`SELECT title FROM \`${workspaceTableName}\` WHERE object_id = ? OR REPLACE(object_id, '-', '') = ?`, [pageId, normalizedPageId]);
+                if (objectRows.length > 0) {
+                    title = objectRows[0].title;
+                }
+                breadcrumbs = await getBreadcrumbsFromDb(req.user.id, pageId);
+            } catch (e) {}
+
+            return res.json({ 
+                success: true, 
+                data: [], 
+                synced: false, 
+                title,
+                breadcrumbs,
+                message: '该页面尚未同步，请先执行同步' 
+            });
         }
 
         // 5. 重建树形结构 (仅针对分页后的根节点)
@@ -616,7 +686,7 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
             };
         });
 
-        // 获取页面标题与面包屑 (保持原逻辑)
+        // 获取页面标题与面包屑 (改用本地数据库获取)
         const workspaceTableName = `user_${req.user.id}_workspace_objects`;
         let title = '页面详情分析';
         let breadcrumbs = [];
@@ -625,11 +695,8 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
             if (objectRows.length > 0) {
                 title = objectRows[0].title;
             }
-
-            // 获取实时层级面包屑
-            const configs = await db.getAllConfigs(req.user.id);
-            const notion = new NotionClient(req.user.id, configs.notion_api_key, configs.notion_version);
-            breadcrumbs = await notion.getBreadcrumbs(pageId, 'page');
+            // 改用本地函数，避免调用 Notion API
+            breadcrumbs = await getBreadcrumbsFromDb(req.user.id, pageId);
         } catch (e) {
             console.error('Fetch title and breadcrumbs error:', e);
         }
@@ -1160,7 +1227,26 @@ router.get('/notion/page/:pageId', authenticate, async (req, res) => {
         const rows = await db.query(`SELECT * FROM \`${detailTableName}\` WHERE page_id = ? OR REPLACE(page_id, '-', '') = ?`, [pageId, normalizedPageId]);
         
         if (rows.length === 0) {
-            return res.json({ success: true, data: [], synced: false, message: '该页面尚未同步' });
+            // 即使未同步内容，也尝试获取标题和面包屑用于显示
+            let title = '工作区页面分析';
+            let breadcrumbs = [];
+            try {
+                const workspaceTableName = `user_${req.user.id}_workspace_objects`;
+                const objectRows = await db.query(`SELECT title FROM \`${workspaceTableName}\` WHERE object_id = ? OR REPLACE(object_id, '-', '') = ?`, [pageId, normalizedPageId]);
+                if (objectRows.length > 0) {
+                    title = objectRows[0].title;
+                }
+                breadcrumbs = await getBreadcrumbsFromDb(req.user.id, pageId);
+            } catch (e) {}
+
+            return res.json({ 
+                success: true, 
+                data: [], 
+                synced: false, 
+                title,
+                breadcrumbs,
+                message: '该页面尚未同步' 
+            });
         }
 
         // 获取根节点总数
@@ -1199,7 +1285,7 @@ router.get('/notion/page/:pageId', authenticate, async (req, res) => {
             };
         });
         
-        // 获取页面标题与面包屑
+        // 获取页面标题与面包屑 (改用本地数据库获取)
         const workspaceTableName = `user_${req.user.id}_workspace_objects`;
         let title = '工作区页面分析';
         let breadcrumbs = [];
@@ -1208,11 +1294,8 @@ router.get('/notion/page/:pageId', authenticate, async (req, res) => {
             if (objectRows.length > 0) {
                 title = objectRows[0].title;
             }
-
-            // 获取实时层级面包屑
-            const configs = await db.getAllConfigs(req.user.id);
-            const notion = new NotionClient(req.user.id, configs.notion_api_key, configs.notion_version);
-            breadcrumbs = await notion.getBreadcrumbs(pageId, 'page');
+            // 改用本地函数，避免调用 Notion API
+            breadcrumbs = await getBreadcrumbsFromDb(req.user.id, pageId);
         } catch (e) {
             console.error('Fetch title and breadcrumbs error:', e);
         }
