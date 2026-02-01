@@ -1391,4 +1391,40 @@ router.get('/public/shares/:token', async (req, res) => {
     }
 });
 
+/**
+ * 实时预览数据库内容 (不存储)
+ * GET /api/notion/database/:databaseId/preview
+ */
+router.get('/notion/database/:databaseId/preview', authenticate, async (req, res) => {
+    const { databaseId } = req.params;
+    try {
+        const configs = await db.getAllConfigs(req.user.id);
+        const apiKey = configs.notion_api_key;
+        const notionVersion = configs.notion_version || '2025-09-03';
+
+        if (!apiKey) {
+            return res.status(400).json({ success: false, message: '未配置 Notion API Key' });
+        }
+
+        const notion = new NotionClient(req.user.id, apiKey, notionVersion);
+        
+        // 1. 获取数据库结构
+        const database = await notion.getDatabase(databaseId);
+        
+        // 2. 获取实时数据
+        const data = await notion.queryDatabase(databaseId, { page_size: 50 });
+
+        res.json({ 
+            success: true, 
+            database,
+            results: data.results,
+            has_more: data.has_more,
+            next_cursor: data.next_cursor
+        });
+    } catch (error) {
+        console.error('Realtime preview error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 module.exports = router;
