@@ -1411,15 +1411,16 @@ router.get('/notion/database/:databaseId/preview', authenticate, async (req, res
         // 1. 获取数据库结构
         const database = await notion.getDatabase(databaseId);
         
-        // 2. 获取实时数据
-        const data = await notion.queryDatabase(databaseId, { page_size: 50 });
+        // 2. 直接调用 data_sources 接口查询实时数据 (不落地)
+        console.log(`Directly querying data_source: ${databaseId}`);
+        const data = await notion.queryDataSource(databaseId, { page_size: 50 });
 
         res.json({ 
             success: true, 
             database,
-            results: data.results,
-            has_more: data.has_more,
-            next_cursor: data.next_cursor
+            results: data.results || [],
+            has_more: data.has_more || false,
+            next_cursor: data.next_cursor || null
         });
     } catch (error) {
         console.error('Realtime preview error:', error);
