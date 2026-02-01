@@ -595,10 +595,23 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
 
         const blocks = buildTree(pageId);
 
+        // 获取页面标题
+        const workspaceTableName = `user_${req.user.id}_workspace_objects`;
+        let title = '页面详情分析';
+        try {
+            const objectRows = await db.query(`SELECT title FROM \`${workspaceTableName}\` WHERE object_id = ? OR REPLACE(object_id, '-', '') = ?`, [pageId, normalizedPageId]);
+            if (objectRows.length > 0) {
+                title = objectRows[0].title;
+            }
+        } catch (e) {
+            console.error('Fetch title from workspace objects error:', e);
+        }
+
         res.json({ 
             success: true, 
             data: blocks,
             synced: true,
+            title,
             tableName: detailTableName
         });
     } catch (error) {
@@ -1132,7 +1145,20 @@ router.get('/notion/page/:pageId', authenticate, async (req, res) => {
         };
 
         const blocks = buildTree(pageId);
-        res.json({ success: true, data: blocks, synced: true });
+        
+        // 获取页面标题
+        const workspaceTableName = `user_${req.user.id}_workspace_objects`;
+        let title = '工作区页面分析';
+        try {
+            const objectRows = await db.query(`SELECT title FROM \`${workspaceTableName}\` WHERE object_id = ? OR REPLACE(object_id, '-', '') = ?`, [pageId, normalizedPageId]);
+            if (objectRows.length > 0) {
+                title = objectRows[0].title;
+            }
+        } catch (e) {
+            console.error('Fetch title from workspace objects error:', e);
+        }
+
+        res.json({ success: true, data: blocks, synced: true, title });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
