@@ -540,6 +540,8 @@ router.get('/data/:databaseId', authenticate, async (req, res) => {
  */
 router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
     const { databaseId, pageId } = req.params;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
     
     // 归一化 ID (去除连字符) 用于比较
     const normalizeId = (id) => id.replace(/-/g, '').toLowerCase();
@@ -566,18 +568,22 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
             return res.json({ success: true, data: [], synced: false, message: '该页面尚未同步，请先执行同步' });
         }
 
-        // 3. 从数据库查询所有 Block (使用原始 ID 查询，因为存储时用的是原始 ID)
-        // 但为了保险，我们查询该 page_id 相关的所有记录
+        // 3. 获取根节点总数
+        const countResult = await db.query(`SELECT COUNT(*) as total FROM \`${detailTableName}\` WHERE parent_id = ? OR REPLACE(parent_id, '-', '') = ?`, [pageId, normalizedPageId]);
+        const totalRootBlocks = Number(countResult[0].total || 0);
+
+        // 4. 从数据库查询所有 Block 用于构建树 (目前仍需全量读取以保证递归子节点完整)
+        // 优化：我们只过滤出属于该 page 的所有块
         const rows = await db.query(`SELECT * FROM \`${detailTableName}\` WHERE page_id = ? OR REPLACE(page_id, '-', '') = ?`, [pageId, normalizedPageId]);
         
         if (rows.length === 0) {
             return res.json({ success: true, data: [], synced: false, message: '该页面尚未同步，请先执行同步' });
         }
 
-        // 4. 重建树形结构
-        const buildTree = (parentId) => {
+        // 5. 重建树形结构 (仅针对分页后的根节点)
+        const buildTree = (parentId, allRows) => {
             const normalizedParentId = normalizeId(parentId);
-            return rows
+            return allRows
                 .filter(row => normalizeId(row.parent_id) === normalizedParentId)
                 .map(row => {
                     let content;
@@ -588,14 +594,29 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
                     }
                     return {
                         ...content,
-                        children: buildTree(row.block_id)
+                        children: buildTree(row.block_id, allRows)
                     };
                 });
         };
 
-        const blocks = buildTree(pageId);
+        // 获取分页后的根节点块
+        const rootRows = rows.filter(row => normalizeId(row.parent_id) === normalizedPageId);
+        const pagedRootRows = rootRows.slice(offset, offset + limit);
+        
+        const blocks = pagedRootRows.map(row => {
+            let content;
+            try {
+                content = typeof row.content === 'string' ? JSON.parse(row.content) : row.content;
+            } catch (e) {
+                content = row.content;
+            }
+            return {
+                ...content,
+                children: buildTree(row.block_id, rows)
+            };
+        });
 
-        // 获取页面标题与面包屑
+        // 获取页面标题与面包屑 (保持原逻辑)
         const workspaceTableName = `user_${req.user.id}_workspace_objects`;
         let title = '页面详情分析';
         let breadcrumbs = [];
@@ -619,7 +640,13 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
             synced: true,
             title,
             breadcrumbs,
-            tableName: detailTableName
+            tableName: detailTableName,
+            pagination: {
+                total: totalRootBlocks,
+                offset,
+                limit,
+                has_more: offset + limit < totalRootBlocks
+            }
         });
     } catch (error) {
         console.error('Fetch page detail from DB error:', error);
@@ -1115,6 +1142,9 @@ router.get('/notion/search', authenticate, async (req, res) => {
  */
 router.get('/notion/page/:pageId', authenticate, async (req, res) => {
     const { pageId } = req.params;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+    
     const normalizeId = (id) => id.replace(/-/g, '').toLowerCase();
     const normalizedPageId = normalizeId(pageId);
     const detailTableName = `user_${req.user.id}_workspace_details`;
@@ -1133,9 +1163,13 @@ router.get('/notion/page/:pageId', authenticate, async (req, res) => {
             return res.json({ success: true, data: [], synced: false, message: '该页面尚未同步' });
         }
 
-        const buildTree = (parentId) => {
+        // 获取根节点总数
+        const rootRows = rows.filter(row => normalizeId(row.parent_id) === normalizedPageId);
+        const totalRootBlocks = rootRows.length;
+
+        const buildTree = (parentId, allRows) => {
             const normalizedParentId = normalizeId(parentId);
-            return rows
+            return allRows
                 .filter(row => normalizeId(row.parent_id) === normalizedParentId)
                 .map(row => {
                     let content;
@@ -1146,12 +1180,24 @@ router.get('/notion/page/:pageId', authenticate, async (req, res) => {
                     }
                     return {
                         ...content,
-                        children: buildTree(row.block_id)
+                        children: buildTree(row.block_id, allRows)
                     };
                 });
         };
 
-        const blocks = buildTree(pageId);
+        const pagedRootRows = rootRows.slice(offset, offset + limit);
+        const blocks = pagedRootRows.map(row => {
+            let content;
+            try {
+                content = typeof row.content === 'string' ? JSON.parse(row.content) : row.content;
+            } catch (e) {
+                content = row.content;
+            }
+            return {
+                ...content,
+                children: buildTree(row.block_id, rows)
+            };
+        });
         
         // 获取页面标题与面包屑
         const workspaceTableName = `user_${req.user.id}_workspace_objects`;
@@ -1171,7 +1217,19 @@ router.get('/notion/page/:pageId', authenticate, async (req, res) => {
             console.error('Fetch title and breadcrumbs error:', e);
         }
 
-        res.json({ success: true, data: blocks, synced: true, title, breadcrumbs });
+        res.json({ 
+            success: true, 
+            data: blocks, 
+            synced: true, 
+            title, 
+            breadcrumbs,
+            pagination: {
+                total: totalRootBlocks,
+                offset,
+                limit,
+                has_more: offset + limit < totalRootBlocks
+            }
+        });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -1421,16 +1479,35 @@ router.get('/notion/database/:databaseId/preview', authenticate, async (req, res
 
         const notion = new NotionClient(req.user.id, apiKey, notionVersion);
         
-        // 1. 获取数据库结构
-        const database = await notion.getDatabase(databaseId);
+        // 1. 获取数据库/数据源基本结构
+        let database = null;
+        try {
+            database = await notion.getDatabase(databaseId);
+        } catch (e) {
+            console.log(`Failed to get database info for ${databaseId}, trying as data source...`);
+        }
         
-        // 2. 直接调用 data_sources 接口查询实时数据 (不落地)
-        console.log(`Directly querying data_source: ${databaseId}`);
-        const data = await notion.queryDataSource(databaseId, { page_size: 50 });
+        // 2. 尝试获取实时数据
+        let data = { results: [] };
+        try {
+            // 优先尝试调用 data_sources 接口 (符合用户最新需求)
+            console.log(`Querying data_source: ${databaseId}`);
+            data = await notion.queryDataSource(databaseId, { page_size: 50 });
+        } catch (e) {
+            console.log(`data_sources query failed for ${databaseId}, falling back to databases query...`);
+            try {
+                // 如果 data_sources 失败，回退到标准的 databases 接口
+                data = await notion.queryDatabase(databaseId, { page_size: 50 });
+            } catch (e2) {
+                console.error('All query attempts failed:', e2.message);
+                // 如果都失败了，抛出原始错误
+                throw e; 
+            }
+        }
 
         res.json({ 
             success: true, 
-            database,
+            database: database || { title: [{ plain_text: '未知数据库' }] },
             results: data.results || [],
             has_more: data.has_more || false,
             next_cursor: data.next_cursor || null
