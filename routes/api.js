@@ -595,16 +595,22 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
 
         const blocks = buildTree(pageId);
 
-        // 获取页面标题
+        // 获取页面标题与面包屑
         const workspaceTableName = `user_${req.user.id}_workspace_objects`;
         let title = '页面详情分析';
+        let breadcrumbs = [];
         try {
             const objectRows = await db.query(`SELECT title FROM \`${workspaceTableName}\` WHERE object_id = ? OR REPLACE(object_id, '-', '') = ?`, [pageId, normalizedPageId]);
             if (objectRows.length > 0) {
                 title = objectRows[0].title;
             }
+
+            // 获取实时层级面包屑
+            const configs = await db.getAllConfigs(req.user.id);
+            const notion = new NotionClient(req.user.id, configs.notion_api_key, configs.notion_version);
+            breadcrumbs = await notion.getBreadcrumbs(pageId, 'page');
         } catch (e) {
-            console.error('Fetch title from workspace objects error:', e);
+            console.error('Fetch title and breadcrumbs error:', e);
         }
 
         res.json({ 
@@ -612,6 +618,7 @@ router.get('/data/:databaseId/page/:pageId', authenticate, async (req, res) => {
             data: blocks,
             synced: true,
             title,
+            breadcrumbs,
             tableName: detailTableName
         });
     } catch (error) {
@@ -1146,19 +1153,25 @@ router.get('/notion/page/:pageId', authenticate, async (req, res) => {
 
         const blocks = buildTree(pageId);
         
-        // 获取页面标题
+        // 获取页面标题与面包屑
         const workspaceTableName = `user_${req.user.id}_workspace_objects`;
         let title = '工作区页面分析';
+        let breadcrumbs = [];
         try {
             const objectRows = await db.query(`SELECT title FROM \`${workspaceTableName}\` WHERE object_id = ? OR REPLACE(object_id, '-', '') = ?`, [pageId, normalizedPageId]);
             if (objectRows.length > 0) {
                 title = objectRows[0].title;
             }
+
+            // 获取实时层级面包屑
+            const configs = await db.getAllConfigs(req.user.id);
+            const notion = new NotionClient(req.user.id, configs.notion_api_key, configs.notion_version);
+            breadcrumbs = await notion.getBreadcrumbs(pageId, 'page');
         } catch (e) {
-            console.error('Fetch title from workspace objects error:', e);
+            console.error('Fetch title and breadcrumbs error:', e);
         }
 
-        res.json({ success: true, data: blocks, synced: true, title });
+        res.json({ success: true, data: blocks, synced: true, title, breadcrumbs });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
