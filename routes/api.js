@@ -1114,7 +1114,12 @@ router.post('/notion/workspace/sync', authenticate, async (req, res) => {
             );
         }
 
-        res.json({ success: true, message: '工作区列表同步完成', count: allResults.length });
+        // 4. 后台触发所有页面的内容同步 (不等待结果)
+        SyncEngine.syncWorkspacePageDetails(req.user.id).catch(err => {
+            console.error('Background detail sync trigger error:', err);
+        });
+
+        res.json({ success: true, message: '工作区列表同步完成，正在后台同步详细内容', count: allResults.length });
     } catch (error) {
         console.error('Workspace sync error:', error);
         res.status(500).json({ success: false, message: error.message });
