@@ -765,45 +765,14 @@ router.post('/data/:databaseId/page/:pageId/sync', authenticate, async (req, res
         `;
         await db.query(createTableSql);
 
-        // 4. 从 Notion 递归获取
+        // 4. 执行同步
         const notion = new NotionClient(req.user.id, apiKey, notionVersion);
-        const blocks = await notion.getPageBlocksRecursive(pageId);
-
-        // 5. 存储到 DB
-        await db.query(`DELETE FROM \`${detailTableName}\` WHERE page_id = ?`, [pageId]);
-
-        const flattenBlocks = (blockList, parentId = pageId) => {
-            let result = [];
-            for (const block of blockList) {
-                const { children, ...blockData } = block;
-                result.push({
-                    page_id: pageId,
-                    block_id: block.id,
-                    type: block.type,
-                    content: JSON.stringify(blockData),
-                    parent_id: parentId
-                });
-                if (children && children.length > 0) {
-                    result = result.concat(flattenBlocks(children, block.id));
-                }
-            }
-            return result;
-        };
-
-        const flatData = flattenBlocks(blocks);
-
-        // 批量插入优化
-        for (const item of flatData) {
-            await db.query(
-                `INSERT INTO \`${detailTableName}\` (page_id, block_id, type, content, parent_id) VALUES (?, ?, ?, ?, ?)`,
-                [item.page_id, item.block_id, item.type, item.content, item.parent_id]
-            );
-        }
+        const count = await SyncEngine.syncPageContent(req.user.id, pageId, notion, detailTableName);
 
         res.json({
             success: true,
             message: '同步完成',
-            count: flatData.length
+            count: count
         });
     } catch (error) {
         console.error('Sync page detail error:', error);
@@ -1358,37 +1327,9 @@ router.post('/notion/page/:pageId/sync', authenticate, async (req, res) => {
         await db.query(createTableSql);
 
         const notion = new NotionClient(req.user.id, apiKey, notionVersion);
-        const blocks = await notion.getPageBlocksRecursive(pageId);
+        const count = await SyncEngine.syncPageContent(req.user.id, pageId, notion, detailTableName);
 
-        await db.query(`DELETE FROM \`${detailTableName}\` WHERE page_id = ?`, [pageId]);
-
-        const flattenBlocks = (blockList, parentId = pageId) => {
-            let result = [];
-            for (const block of blockList) {
-                const { children, ...blockData } = block;
-                result.push({
-                    page_id: pageId,
-                    block_id: block.id,
-                    type: block.type,
-                    content: JSON.stringify(blockData),
-                    parent_id: parentId
-                });
-                if (children && children.length > 0) {
-                    result = result.concat(flattenBlocks(children, block.id));
-                }
-            }
-            return result;
-        };
-
-        const flatData = flattenBlocks(blocks);
-        for (const item of flatData) {
-            await db.query(
-                `INSERT INTO \`${detailTableName}\` (page_id, block_id, type, content, parent_id) VALUES (?, ?, ?, ?, ?)`,
-                [item.page_id, item.block_id, item.type, item.content, item.parent_id]
-            );
-        }
-
-        res.json({ success: true, message: '同步完成', count: flatData.length });
+        res.json({ success: true, message: '同步完成', count: count });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
