@@ -57,6 +57,18 @@ CREATE TABLE IF NOT EXISTS `dict_table` (
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='权限字典表';
 
+-- 页面分享配置表
+CREATE TABLE IF NOT EXISTS `page_shares` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `page_id` VARCHAR(100) NOT NULL,
+    `user_id` INT NOT NULL,
+    `share_token` VARCHAR(64) NOT NULL UNIQUE,
+    `is_active` TINYINT(1) DEFAULT 1,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_page_user` (`page_id`, `user_id`),
+    FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='页面分享配置表';
+
 -- 初始化权限字典
 INSERT IGNORE INTO `dict_table` (`dict_code`, `dict_name`, `category`) VALUES 
 ('sync:notion', '执行 Notion 同步权限', 'permission'),

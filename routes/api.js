@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const Auth = require('../lib/auth');
 const db = require('../lib/db');
 const SyncEngine = require('../lib/sync');
@@ -659,6 +660,153 @@ router.get('/config', authenticate, async (req, res) => {
         const configs = await db.getAllConfigs(req.user.id);
         res.json({ success: true, data: configs });
     } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 公开访问分享页面 (无需身份验证)
+ * GET /api/public/shares/:token
+ */
+router.get('/public/shares/:token', async (req, res) => {
+    const { token } = req.params;
+    try {
+        // 1. 查找分享配置
+        const share = await db.query('SELECT * FROM page_shares WHERE share_token = ? AND is_active = 1', [token]);
+        if (share.length === 0) {
+            return res.status(404).json({ success: false, message: '分享链接无效或已关闭' });
+        }
+
+        const { page_id, user_id } = share[0];
+
+        // 2. 获取该用户的 Notion API Key
+        const configs = await db.getAllConfigs(user_id);
+        const apiKey = configs.notion_api_key;
+        if (!apiKey) {
+            return res.status(500).json({ success: false, message: '该页面的分享配置已失效 (API Key 缺失)' });
+        }
+
+        const notion = new NotionClient(user_id, apiKey, configs.notion_version);
+
+        // 3. 获取页面详情和内容块
+        const page = await notion.getPage(page_id);
+        const blocksResponse = await notion.getPageBlocks(page_id);
+
+        // 提取标题
+        let title = 'Untitled';
+        if (page.properties) {
+            // 尝试不同的属性名，Notion 页面标题可能是 'title' 或 'Name'
+            const titleProp = page.properties.title || page.properties.Name;
+            if (titleProp && titleProp.title) {
+                title = titleProp.title.map(t => t.plain_text).join('');
+            }
+        }
+
+        res.json({
+            success: true,
+            data: {
+                id: page_id,
+                title: title,
+                blocks: blocksResponse.results
+            }
+        });
+    } catch (error) {
+        console.error('Public share access error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 获取页面的分享配置
+ * GET /api/shares/:pageId
+ */
+router.get('/shares/:pageId', authenticate, async (req, res) => {
+    const { pageId } = req.params;
+    try {
+        const share = await db.query('SELECT * FROM page_shares WHERE page_id = ? AND user_id = ?', [pageId, req.user.id]);
+        res.json({ 
+            success: true, 
+            data: share.length > 0 ? share[0] : null 
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 切换页面分享状态
+ * POST /api/shares/:pageId
+ */
+router.post('/shares/:pageId', authenticate, async (req, res) => {
+    const { pageId } = req.params;
+    const { is_active } = req.body;
+    
+    try {
+        // 检查是否已有配置
+        const existing = await db.query('SELECT * FROM page_shares WHERE page_id = ? AND user_id = ?', [pageId, req.user.id]);
+        
+        if (existing.length > 0) {
+            await db.query('UPDATE page_shares SET is_active = ? WHERE id = ?', [is_active ? 1 : 0, existing[0].id]);
+            const updated = await db.query('SELECT * FROM page_shares WHERE id = ?', [existing[0].id]);
+            res.json({ success: true, data: updated[0] });
+        } else {
+            // 生成新 token
+            const token = crypto.randomBytes(16).toString('hex');
+            await db.query('INSERT INTO page_shares (page_id, user_id, share_token, is_active) VALUES (?, ?, ?, ?)', 
+                [pageId, req.user.id, token, is_active ? 1 : 0]);
+            const created = await db.query('SELECT * FROM page_shares WHERE share_token = ?', [token]);
+            res.json({ success: true, data: created[0] });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 获取 Notion 页面内容块 (已登录用户)
+ * GET /api/notion/page/:pageId
+ */
+router.get('/notion/page/:pageId', authenticate, async (req, res) => {
+    const { pageId } = req.params;
+    const limit = parseInt(req.query.limit) || 100;
+    const cursor = req.query.cursor || undefined;
+    
+    try {
+        const configs = await db.getAllConfigs(req.user.id);
+        const apiKey = configs.notion_api_key;
+        if (!apiKey) return res.status(400).json({ success: false, message: '未配置 Notion API Key' });
+
+        const notion = new NotionClient(req.user.id, apiKey, configs.notion_version);
+        
+        // 1. 获取页面详情 (为了获取标题)
+        const page = await notion.getPage(pageId);
+        
+        // 2. 获取内容块
+        const blocksResponse = await notion.getPageBlocks(pageId, {
+            page_size: limit,
+            start_cursor: cursor
+        });
+
+        let title = 'Untitled';
+        if (page.properties) {
+            const titleProp = page.properties.title || page.properties.Name;
+            if (titleProp && titleProp.title) {
+                title = titleProp.title.map(t => t.plain_text).join('');
+            }
+        }
+
+        res.json({
+            success: true,
+            synced: true,
+            title: title,
+            data: blocksResponse.results,
+            pagination: {
+                has_more: blocksResponse.has_more,
+                next_cursor: blocksResponse.next_cursor
+            }
+        });
+    } catch (error) {
+        console.error('Fetch notion page error:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
