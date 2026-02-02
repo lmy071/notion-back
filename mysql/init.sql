@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS `users` (
     `password` VARCHAR(255) NOT NULL COMMENT '密码',
     `permissions` TEXT COMMENT '权限标识，逗号分隔，如 sync:notion',
     `role` VARCHAR(20) DEFAULT 'user' COMMENT '角色',
+    `avatar` TEXT COMMENT '用户头像 URL',
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户管理表';
@@ -48,6 +49,19 @@ CREATE TABLE IF NOT EXISTS `notion_sync_targets` (
     FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Notion 同步目标配置表';
 
+-- 监控日志表 (性能与错误)
+CREATE TABLE IF NOT EXISTS `monitoring_logs` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT COMMENT '触发用户 ID',
+    `type` VARCHAR(20) NOT NULL COMMENT '类型: performance, error',
+    `event` VARCHAR(50) COMMENT '具体事件名称',
+    `url` TEXT COMMENT '触发页面 URL',
+    `data` JSON COMMENT '详细数据内容',
+    `ua` TEXT COMMENT '用户浏览器 UA',
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='前端监控日志表';
+
 -- 权限字典表
 CREATE TABLE IF NOT EXISTS `dict_table` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
@@ -79,3 +93,18 @@ INSERT IGNORE INTO `dict_table` (`dict_code`, `dict_name`, `category`) VALUES
 -- 初始化默认管理员 (密码: admin123)
 INSERT IGNORE INTO `users` (`username`, `password`, `permissions`, `role`) VALUES 
 ('admin', 'admin123', 'sync:notion,data:delete,user:manage,config:manage', 'admin');
+
+-- 页面分享配置表
+CREATE TABLE IF NOT EXISTS `shares` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT NOT NULL COMMENT '所属用户 ID',
+    `object_id` VARCHAR(64) NOT NULL COMMENT 'Notion 页面或数据库 ID',
+    `share_token` VARCHAR(64) NOT NULL UNIQUE COMMENT '分享令牌',
+    `is_active` TINYINT(1) DEFAULT 1 COMMENT '是否启用分享: 1启用, 0禁用',
+    `config` JSON COMMENT '分享配置(过期时间、密码等)',
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_object_id` (`object_id`),
+    INDEX `idx_share_token` (`share_token`),
+    FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='页面分享配置表';
