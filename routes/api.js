@@ -783,10 +783,10 @@ router.post('/data/:databaseId/page/:pageId/sync', authenticate, async (req, res
 /**
  * 查询 API 调用日志
  * GET /api/logs
- * 支持可选参数: isSuccess (0/1), limit, offset
+ * 支持可选参数: isSuccess (0/1), statusCode, url, limit, offset
  */
 router.get('/logs', authenticate, async (req, res) => {
-    const { isSuccess, limit = 50, offset = 0 } = req.query;
+    const { isSuccess, statusCode, url, limit = 50, offset = 0 } = req.query;
 
     try {
         let sql = 'SELECT * FROM api_logs WHERE user_id = ?';
@@ -796,15 +796,40 @@ router.get('/logs', authenticate, async (req, res) => {
             sql += ' AND is_success = ?';
             params.push(isSuccess);
         }
+        
+        if (statusCode) {
+            sql += ' AND status_code = ?';
+            params.push(parseInt(statusCode));
+        }
+
+        if (url) {
+            sql += ' AND url LIKE ?';
+            params.push(`%${url}%`);
+        }
 
         sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-        params.push(parseInt(limit), parseInt(offset));
+        const queryParams = [...params, parseInt(limit), parseInt(offset)];
 
-        const logs = await db.query(sql, params);
+        const logs = await db.query(sql, queryParams);
 
         // 获取总数用于分页
-        const countSql = isSuccess !== undefined ? 'SELECT COUNT(*) as total FROM api_logs WHERE user_id = ? AND is_success = ?' : 'SELECT COUNT(*) as total FROM api_logs WHERE user_id = ?';
-        const totalResult = await db.query(countSql, isSuccess !== undefined ? [req.user.id, isSuccess] : [req.user.id]);
+        let countSql = 'SELECT COUNT(*) as total FROM api_logs WHERE user_id = ?';
+        const countParams = [req.user.id];
+        
+        if (isSuccess !== undefined) {
+            countSql += ' AND is_success = ?';
+            countParams.push(isSuccess);
+        }
+        if (statusCode) {
+            countSql += ' AND status_code = ?';
+            countParams.push(parseInt(statusCode));
+        }
+        if (url) {
+            countSql += ' AND url LIKE ?';
+            countParams.push(`%${url}%`);
+        }
+
+        const totalResult = await db.query(countSql, countParams);
 
         res.json({
             success: true,
