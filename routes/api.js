@@ -36,6 +36,8 @@ const upload = multer({
     }
 });
 
+const { StatusCode } = require('../lib/constants');
+
 /**
  * 简单的身份验证中间件
  * 实际应用中建议使用 JWT 或 Session
@@ -43,11 +45,19 @@ const upload = multer({
 const authenticate = async (req, res, next) => {
     const userId = req.headers['x-user-id'];
     if (!userId) {
-        return res.status(401).json({ success: false, message: '未登录' });
+        return res.status(401).json({ 
+            success: false, 
+            message: '未登录',
+            code: StatusCode.UNAUTHORIZED
+        });
     }
     const user = await Auth.getUser(userId);
     if (!user) {
-        return res.status(401).json({ success: false, message: '无效的用户' });
+        return res.status(401).json({ 
+            success: false, 
+            message: '无效的用户',
+            code: StatusCode.UNAUTHORIZED
+        });
     }
     req.user = user;
     next();
