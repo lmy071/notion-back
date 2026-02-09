@@ -1795,7 +1795,8 @@ router.get('/charts/consumption/daily', authenticate, async (req, res) => {
         };
 
         const amountCol = preferByName(doubles, ['金额', 'price', 'amount', '消费', 'jine']) || doubles[0];
-        const dateCol = preferByName(datetimes, ['日期', 'date', '时间', 'time']) || datetimes[0];
+        const preferredDateCol = columns.find(c => c.Field === 'xiao_fei_ri_qi');
+        const dateCol = preferredDateCol || preferByName(datetimes, ['日期', 'date', '时间', 'time']) || datetimes[0];
 
         if (!amountCol || !dateCol) {
             return res.status(400).json({ success: false, message: '无法自动识别金额或日期字段，请确认消费记录表包含数字与日期列' });
