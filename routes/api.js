@@ -1732,4 +1732,122 @@ router.get('/notion/page/:pageId', authenticate, async (req, res) => {
     }
 });
 
+/**
+ * 消费记录 · 最近一个月日支出总和
+ * GET /api/charts/consumption/daily
+ * 可选参数:
+ * - days: 天数范围，默认 30
+ * - databaseId: 指定 Notion 数据库 ID（优先）
+ */
+router.get('/charts/consumption/daily', authenticate, async (req, res) => {
+    const days = parseInt(req.query.days) || 30;
+    const databaseId = req.query.databaseId || null;
+
+    try {
+        // 1) 解析消费记录的数据源名称
+        let dsName = null;
+        if (databaseId) {
+            const dsInfo = await db.query(
+                'SELECT name FROM notion_data_sources WHERE database_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1',
+                [databaseId, req.user.id]
+            );
+            if (dsInfo.length > 0) {
+                dsName = dsInfo[0].name;
+            }
+        }
+        if (!dsName) {
+            const candidates = await db.query(
+                "SELECT name FROM notion_data_sources WHERE user_id = ? AND (name LIKE '%消费%' OR name LIKE '%消費%' OR name LIKE '%xiaofei%' OR name LIKE '%xiao_fei%') ORDER BY created_at DESC LIMIT 1",
+                [req.user.id]
+            );
+            if (candidates.length > 0) {
+                dsName = candidates[0].name;
+            }
+        }
+        if (!dsName) {
+            return res.status(404).json({ success: false, message: '未找到消费记录数据源，请在同步配置中添加包含“消费”名称的数据库' });
+        }
+
+        // 2) 生成表名并检查是否存在
+        const tableName = NotionClient.generateTableName(req.user.id, dsName);
+        const tableCheck = await db.query(
+            "SELECT COUNT(*) as exists_count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+            [tableName]
+        );
+        if (tableCheck[0].exists_count === 0) {
+            return res.status(404).json({ success: false, message: `数据表 ${tableName} 不存在，请先执行同步` });
+        }
+
+        // 3) 获取列信息，推断金额与日期列
+        const columns = await db.query(`SHOW COLUMNS FROM \`${tableName}\``);
+        const pickByType = (typeRegex) => columns.filter(c => new RegExp(typeRegex, 'i').test(c.Type));
+        const doubles = pickByType('double');
+        const datetimes = pickByType('datetime|timestamp|date');
+
+        const preferByName = (cands, names) => {
+            const list = [...cands];
+            list.sort((a, b) => {
+                const sa = names.some(n => a.Field.includes(n)) ? 1 : 0;
+                const sb = names.some(n => b.Field.includes(n)) ? 1 : 0;
+                return sb - sa;
+            });
+            return list.length > 0 ? list[0] : null;
+        };
+
+        const amountCol = preferByName(doubles, ['金额', 'price', 'amount', '消费', 'jine']) || doubles[0];
+        const dateCol = preferByName(datetimes, ['日期', 'date', '时间', 'time']) || datetimes[0];
+
+        if (!amountCol || !dateCol) {
+            return res.status(400).json({ success: false, message: '无法自动识别金额或日期字段，请确认消费记录表包含数字与日期列' });
+        }
+
+        // 4) 查询最近 N 天的日支出总和
+        const sql = `
+            SELECT DATE(\`${dateCol.Field}\`) AS day, COALESCE(SUM(\`${amountCol.Field}\`), 0) AS total
+            FROM \`${tableName}\`
+            WHERE \`${dateCol.Field}\` >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+            GROUP BY day
+            ORDER BY day ASC
+        `;
+        const rows = await db.query(sql, [days]);
+
+        const normalizeYmd = (d) => {
+            const date = new Date(d);
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const dd = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${dd}`;
+        };
+        const map = new Map();
+        rows.forEach(r => {
+            const key = normalizeYmd(r.day);
+            map.set(key, Number(r.total || 0));
+        });
+        const today = new Date();
+        const start = new Date();
+        start.setDate(today.getDate() - (days - 1));
+        const full = [];
+        for (let i = 0; i < days; i++) {
+            const d = new Date(start);
+            d.setDate(start.getDate() + i);
+            const key = normalizeYmd(d);
+            full.push({ day: key, total: map.get(key) ?? 0 });
+        }
+
+        res.json({
+            success: true,
+            data: full,
+            meta: {
+                table: tableName,
+                amount_col: amountCol.Field,
+                date_col: dateCol.Field,
+                days
+            }
+        });
+    } catch (error) {
+        console.error('Consumption daily chart error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 module.exports = router;
