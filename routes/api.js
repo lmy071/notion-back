@@ -1914,4 +1914,76 @@ router.get('/charts/consumption/daily/details', authenticate, async (req, res) =
     }
 });
 
+/**
+ * 清空指定数据表的数据
+ * DELETE /api/tables/:tableName/clear
+ * 需要管理员权限或数据操作权限
+ */
+router.delete('/tables/:tableName/clear', authenticate, async (req, res) => {
+    const { tableName } = req.params;
+    
+    try {
+        // 权限验证 - 需要数据操作权限或管理员权限
+        const hasDataPermission = await Auth.checkPermission(req.user.id, 'data:manage');
+        const isAdmin = req.user.role === 'admin';
+        
+        if (!hasDataPermission && !isAdmin) {
+            return res.status(403).json({ 
+                success: false, 
+                message: '无数据管理权限 (data:manage)' 
+            });
+        }
+
+        // 安全检查：确保表名符合用户数据表的命名规范
+        const userTablePrefix = `user_${req.user.id}_`;
+        if (!tableName.startsWith(userTablePrefix)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: '只能清空用户自己的数据表' 
+            });
+        }
+
+        // 检查表是否存在
+        const tableCheck = await db.query(
+            "SELECT COUNT(*) as exists_count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+            [tableName]
+        );
+        
+        if (tableCheck[0].exists_count === 0) {
+            return res.status(404).json({ 
+                success: false, 
+                message: `数据表 ${tableName} 不存在` 
+            });
+        }
+
+        // 执行清空操作 - 使用 TRUNCATE 更快且重置自增ID
+        await db.query(`TRUNCATE TABLE \`${tableName}\``);
+
+        // 记录操作日志
+        await db.query(
+            'INSERT INTO api_logs (user_id, method, url, status_code, response_body, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
+            [
+                req.user.id, 
+                'DELETE', 
+                `/api/tables/${tableName}/clear`, 
+                200, 
+                JSON.stringify({ success: true, message: `表 ${tableName} 已清空` })
+            ]
+        );
+
+        res.json({ 
+            success: true, 
+            message: `表 ${tableName} 已清空`, 
+            table: tableName 
+        });
+        
+    } catch (error) {
+        console.error('Clear table error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: error.message 
+        });
+    }
+});
+
 module.exports = router;
