@@ -1851,4 +1851,67 @@ router.get('/charts/consumption/daily', authenticate, async (req, res) => {
     }
 });
 
+router.get('/charts/consumption/daily/details', authenticate, async (req, res) => {
+    const date = req.query.date;
+    const databaseId = req.query.databaseId || null;
+    if (!date) {
+        return res.status(400).json({ success: false, message: '缺少日期参数' });
+    }
+    try {
+        let dsName = null;
+        if (databaseId) {
+            const dsInfo = await db.query(
+                'SELECT name FROM notion_data_sources WHERE database_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 1',
+                [databaseId, req.user.id]
+            );
+            if (dsInfo.length > 0) dsName = dsInfo[0].name;
+        }
+        if (!dsName) {
+            const candidates = await db.query(
+                "SELECT name FROM notion_data_sources WHERE user_id = ? AND (name LIKE '%消费%' OR name LIKE '%消費%' OR name LIKE '%xiaofei%' OR name LIKE '%xiao_fei%') ORDER BY created_at DESC LIMIT 1",
+                [req.user.id]
+            );
+            if (candidates.length > 0) dsName = candidates[0].name;
+        }
+        if (!dsName) {
+            return res.status(404).json({ success: false, message: '未找到消费记录数据源' });
+        }
+
+        const tableName = NotionClient.generateTableName(req.user.id, dsName);
+        const tableCheck = await db.query(
+            "SELECT COUNT(*) as exists_count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+            [tableName]
+        );
+        if (tableCheck[0].exists_count === 0) {
+            return res.status(404).json({ success: false, message: `数据表 ${tableName} 不存在` });
+        }
+
+        const columns = await db.query(`SHOW COLUMNS FROM \`${tableName}\``);
+        const amountCol = columns.find(c => /double/i.test(c.Type)) || columns[0];
+        const preferredDateCol = columns.find(c => c.Field === 'xiao_fei_ri_qi');
+        const dateCol = preferredDateCol || columns.find(c => /(datetime|timestamp|date)/i.test(c.Type)) || columns[0];
+
+        const sql = `
+            SELECT * FROM \`${tableName}\`
+            WHERE DATE(\`${dateCol.Field}\`) = ?
+            ORDER BY \`${dateCol.Field}\` ASC
+            LIMIT 500
+        `;
+        const rows = await db.query(sql, [date]);
+
+        res.json({
+            success: true,
+            data: rows,
+            meta: {
+                table: tableName,
+                amount_col: amountCol.Field,
+                date_col: dateCol.Field,
+                columns: columns.map(c => c.Field)
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
 module.exports = router;
