@@ -960,6 +960,56 @@ router.get('/data_sources/:databaseId', authenticate, async (req, res) => {
 });
 
 /**
+ * 获取用户所有可用的数据源
+ * GET /api/data-sources
+ */
+router.get('/data-sources', authenticate, async (req, res) => {
+    try {
+        const databases = await db.query('SELECT * FROM notion_sync_targets WHERE user_id = ? AND status = 1', [req.user.id]);
+        const allDataSources = [];
+
+        for (const database of databases) {
+            const dataSources = await db.query(
+                'SELECT * FROM notion_data_sources WHERE user_id = ? AND database_id = ?',
+                [req.user.id, database.database_id]
+            );
+
+            for (const source of dataSources) {
+                let fields = [];
+
+                if (source.name) {
+                    try {
+                        const tableName = NotionClient.generateTableName(req.user.id, source.name);
+                        const tableCheck = await db.query(
+                            'SELECT COUNT(*) as exists_count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?',
+                            [tableName]
+                        );
+
+                        if (tableCheck[0].exists_count > 0) {
+                            const columns = await db.query(`SHOW COLUMNS FROM \`${tableName}\``);
+                            fields = columns
+                                .map(c => c.Field)
+                                .filter(name => name !== 'notion_id' && name !== 'synced_at');
+                        }
+                    } catch (e) {
+                        fields = [];
+                    }
+                }
+
+                allDataSources.push({
+                    ...source,
+                    fields
+                });
+            }
+        }
+
+        res.json({ success: true, data: allDataSources });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
  * 根据获取到的字段列属性重新创建对应的数据库表
  * GET/POST /api/data_sources/:dataSourceId/recreate-table
  */
@@ -1582,6 +1632,166 @@ router.get('/notion/database/:databaseId/preview', authenticate, async (req, res
     } catch (error) {
         console.error('Realtime preview error:', error);
         res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+/**
+ * 图表预览接口
+ * POST /api/charts/preview
+ */
+router.post('/charts/preview', authenticate, async (req, res) => {
+    const { dataSource, xAxis, yAxis, type, aggregation, timeRange, filters } = req.body;
+    
+    try {
+        // 验证参数
+        if (!dataSource || !xAxis || !yAxis) {
+            return res.status(400).json({ 
+                success: false, 
+                message: '缺少必要参数：数据源、X轴字段、Y轴字段' 
+            });
+        }
+
+        // 获取数据源信息
+        const dataSourceInfo = await db.query(
+            'SELECT * FROM notion_data_sources WHERE id = ? AND user_id = ?',
+            [dataSource, req.user.id]
+        );
+        
+        if (dataSourceInfo.length === 0) {
+            return res.status(404).json({ 
+                success: false, 
+                message: '数据源不存在或无权限访问' 
+            });
+        }
+
+        const source = dataSourceInfo[0];
+        const tableName = NotionClient.generateTableName(req.user.id, source.name);
+
+        // 检查表是否存在
+        const tableCheck = await db.query(
+            "SELECT COUNT(*) as exists_count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+            [tableName]
+        );
+        
+        if (tableCheck[0].exists_count === 0) {
+            return res.status(404).json({ 
+                success: false, 
+                message: '数据表不存在，请先同步数据' 
+            });
+        }
+
+        // 获取列信息
+        const columns = await db.query(`SHOW COLUMNS FROM \`${tableName}\``);
+        const columnNames = columns.map(col => col.Field);
+        
+        // 验证字段是否存在
+        if (!columnNames.includes(xAxis) || !columnNames.includes(yAxis)) {
+            return res.status(400).json({ 
+                success: false, 
+                message: '指定的X轴或Y轴字段不存在' 
+            });
+        }
+
+        // 构建查询
+        let timeFilter = '';
+        let timeFilterParams = [];
+        
+        if (timeRange && timeRange !== 'all') {
+            const days = timeRange === '7d' ? 7 : 
+                        timeRange === '30d' ? 30 : 
+                        timeRange === '90d' ? 90 : 
+                        timeRange === '1y' ? 365 : 30;
+            
+            timeFilter = `WHERE \`${xAxis}\` >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`;
+            timeFilterParams = [days];
+        }
+
+        // 添加其他过滤器
+        let filterConditions = [];
+        let filterParams = [];
+        
+        if (filters && filters.length > 0) {
+            filters.forEach(filter => {
+                if (filter.field && filter.operator && filter.value) {
+                    let operator = '=';
+                    switch (filter.operator) {
+                        case 'equals': operator = '='; break;
+                        case 'not_equals': operator = '!='; break;
+                        case 'greater_than': operator = '>'; break;
+                        case 'less_than': operator = '<'; break;
+                        case 'contains': operator = 'LIKE'; filter.value = `%${filter.value}%`; break;
+                    }
+                    filterConditions.push(`\`${filter.field}\` ${operator} ?`);
+                    filterParams.push(filter.value);
+                }
+            });
+        }
+
+        // 组合WHERE条件
+        let whereClause = timeFilter;
+        if (filterConditions.length > 0) {
+            const filterClause = filterConditions.join(' AND ');
+            whereClause = timeFilter ? `${timeFilter} AND ${filterClause}` : `WHERE ${filterClause}`;
+            timeFilterParams.push(...filterParams);
+        }
+
+        // 构建聚合查询
+        let sql;
+        let queryParams = [];
+        
+        switch (aggregation) {
+            case 'sum':
+                sql = `SELECT \`${xAxis}\` as x, COALESCE(SUM(\`${yAxis}\`), 0) as y FROM \`${tableName}\` ${whereClause} GROUP BY \`${xAxis}\` ORDER BY \`${xAxis}\``;
+                queryParams = timeFilterParams;
+                break;
+            case 'avg':
+                sql = `SELECT \`${xAxis}\` as x, COALESCE(AVG(\`${yAxis}\`), 0) as y FROM \`${tableName}\` ${whereClause} GROUP BY \`${xAxis}\` ORDER BY \`${xAxis}\``;
+                queryParams = timeFilterParams;
+                break;
+            case 'count':
+                sql = `SELECT \`${xAxis}\` as x, COUNT(*) as y FROM \`${tableName}\` ${whereClause} GROUP BY \`${xAxis}\` ORDER BY \`${xAxis}\``;
+                queryParams = timeFilterParams;
+                break;
+            case 'max':
+                sql = `SELECT \`${xAxis}\` as x, COALESCE(MAX(\`${yAxis}\`), 0) as y FROM \`${tableName}\` ${whereClause} GROUP BY \`${xAxis}\` ORDER BY \`${xAxis}\``;
+                queryParams = timeFilterParams;
+                break;
+            case 'min':
+                sql = `SELECT \`${xAxis}\` as x, COALESCE(MIN(\`${yAxis}\`), 0) as y FROM \`${tableName}\` ${whereClause} GROUP BY \`${xAxis}\` ORDER BY \`${xAxis}\``;
+                queryParams = timeFilterParams;
+                break;
+            default:
+                sql = `SELECT \`${xAxis}\` as x, COALESCE(SUM(\`${yAxis}\`), 0) as y FROM \`${tableName}\` ${whereClause} GROUP BY \`${xAxis}\` ORDER BY \`${xAxis}\``;
+                queryParams = timeFilterParams;
+        }
+
+        // 执行查询
+        const results = await db.query(sql, queryParams);
+
+        // 格式化数据
+        const chartData = results.map(row => ({
+            name: row.x,
+            value: Number(row.y)
+        }));
+
+        res.json({
+            success: true,
+            data: chartData,
+            meta: {
+                total: chartData.length,
+                xAxis: xAxis,
+                yAxis: yAxis,
+                aggregation: aggregation,
+                timeRange: timeRange
+            }
+        });
+
+    } catch (error) {
+        console.error('Chart preview error:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: error.message 
+        });
     }
 });
 
