@@ -1,0 +1,33 @@
+{
+  "picBed": {
+    "current": "smms",
+    "uploader": "smms",
+    "smms": {
+      "token": ""
+    }
+  },
+  "picgoPlugins": {
+    "picgo-plugin-gitee-uploader": true
+  },
+  "debug": true,
+  "PICGO_ENV": "GUI",
+  "settings": {
+    "shortKey": {
+      "picgo:upload": {
+        "enable": true,
+        "key": "CommandOrControl+Alt+P",
+        "name": "upload",
+        "label": "快捷上传"
+      }
+    },
+    "server": {
+      "port": 36677,
+      "host": "0.0.0.0",
+      "enable": true
+    },
+    "isListeningClipboard": false,
+    "language": "zh-CN",
+    "showUpdateTip": true
+  },
+  "needReload": false
+}
